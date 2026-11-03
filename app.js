@@ -1,6 +1,8 @@
 const endpoint = 'https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage';
 const sampleEndpoint = 'https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/getSamples';
 const watershedEndpoint = 'https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer/6/query';
+const waterDataEndpoint = 'https://api.waterdata.usgs.gov/ogcapi/v1/collections/continuous/items';
+const monitoringLocationsEndpoint = 'https://api.waterdata.usgs.gov/ogcapi/v1/collections/monitoring-locations/items';
 const stateBounds = [[32.0, -83.5], [35.35, -78.3]];
 const places = [
   { name: 'Greenville', region: 'Upstate', lat: 34.8526, lon: -82.3940, note: 'At the foot of the Blue Ridge foothills.' },
@@ -51,6 +53,11 @@ const watershedPanel = document.querySelector('#watershed-panel');
 const watershedResult = document.querySelector('#watershed-result');
 const watershedMeta = document.querySelector('#watershed-meta');
 const watershedClearButton = document.querySelector('#watershed-clear');
+const riverToggle = document.querySelector('#river-toggle');
+const riverPanel = document.querySelector('#river-panel');
+const riverResult = document.querySelector('#river-result');
+const riverReadings = document.querySelector('#river-readings');
+const riverClearButton = document.querySelector('#river-clear');
 const swipeToggle = document.querySelector('#swipe-toggle');
 const imageryDateLabel = document.querySelector('#imagery-date-label');
 const imageryDate = document.querySelector('#imagery-date');
@@ -170,6 +177,8 @@ if (typeof L === 'undefined') {
   comparePane.style.pointerEvents = 'none';
   const watershedPane = map.createPane('watershedPane');
   watershedPane.style.zIndex = '425';
+  const riverPane = map.createPane('riverPane');
+  riverPane.style.zIndex = '435';
   const waybackReleases = new Map([
     ['43291', '2026-10-29'],
     ['16453', '2024-12-12'],
@@ -278,11 +287,14 @@ if (typeof L === 'undefined') {
   });
 
   const profileLayer = L.featureGroup().addTo(map);
+  const riverMarkerLayer = L.featureGroup().addTo(map);
   let isDrawingProfile = false;
   let isProbingElevation = false;
   let isFindingWatershed = false;
+  let isFindingRivers = false;
   let probeRequestId = 0;
   let watershedRequestId = 0;
+  let riverRequestId = 0;
   let lastProbeCoordinates;
   let stateRing;
   let probeMarker;
@@ -537,6 +549,156 @@ if (typeof L === 'undefined') {
       watershedMeta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W`;
     }
   }
+  async function findRiversAt(latlng) {
+    const requestId = ++riverRequestId;
+    riverMarkerLayer.clearLayers();
+    riverReadings.replaceChildren();
+    const latitude = latlng.lat;
+    const longitude = latlng.lng;
+    if (!isInsideSouthCarolina(latitude, longitude)) {
+      riverResult.textContent = 'That point is outside South Carolina. Click the land inside the state outline.';
+      return;
+    }
+    riverResult.textContent = 'Searching for recent USGS stream gauges within 30 miles…';
+    const now = new Date();
+    const start = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const halfLatitude = 0.46;
+    const halfLongitude = 0.56;
+    const bbox = [
+      longitude - halfLongitude,
+      latitude - halfLatitude,
+      longitude + halfLongitude,
+      latitude + halfLatitude
+    ].map(value => value.toFixed(5)).join(',');
+    const requestObservations = async parameterCode => {
+      const params = new URLSearchParams({
+        f: 'json',
+        limit: '3000',
+        bbox,
+        parameter_code: parameterCode,
+        datetime: `${start.toISOString()}/${now.toISOString()}`,
+        sortby: '-time'
+      });
+      const response = await fetch(`${waterDataEndpoint}?${params.toString()}`);
+      if (!response.ok) throw new Error(`USGS gauge request failed (${response.status})`);
+      const result = await response.json();
+      if (result.code || result.type === 'InvalidParameterValue') {
+        throw new Error(result.description || result.detail || 'The USGS water-data service returned an error.');
+      }
+      return result.features || [];
+    };
+    try {
+      const [flowFeatures, stageFeatures] = await Promise.all([
+        requestObservations('00060'),
+        requestObservations('00065')
+      ]);
+      if (requestId !== riverRequestId) return;
+      const latestBySite = new Map();
+      flowFeatures.concat(stageFeatures).forEach(feature => {
+        const properties = feature.properties || {};
+        const coordinates = feature.geometry && feature.geometry.coordinates;
+        if (!properties.monitoring_location_id || !coordinates || coordinates.length < 2) return;
+        const key = `${properties.monitoring_location_id}:${properties.parameter_code}`;
+        const observation = latestBySite.get(key);
+        if (!observation || Date.parse(properties.time) > Date.parse(observation.properties.time)) {
+          latestBySite.set(key, feature);
+        }
+      });
+      const stations = new Map();
+      latestBySite.forEach(feature => {
+        const properties = feature.properties;
+        const [lon, lat] = feature.geometry.coordinates;
+        const site = stations.get(properties.monitoring_location_id) || {
+          id: properties.monitoring_location_id,
+          latitude: lat,
+          longitude: lon
+        };
+        if (properties.parameter_code === '00060') site.flow = properties;
+        if (properties.parameter_code === '00065') site.stage = properties;
+        stations.set(site.id, site);
+      });
+      const nearby = [...stations.values()]
+        .map(site => ({
+          ...site,
+          distance: distanceBetween(
+            { lat: latitude, lon: longitude },
+            { lat: site.latitude, lon: site.longitude }
+          )
+        }))
+        .filter(site => site.flow && site.distance <= 30 * 1609.344)
+        .sort((first, second) => first.distance - second.distance)
+        .slice(0, 3);
+      if (!nearby.length) {
+        riverResult.textContent = 'No stream gauges with readings in the past 24 hours were found within 30 miles. Try another point.';
+        return;
+      }
+      const metadata = await Promise.all(nearby.map(async site => {
+        const params = new URLSearchParams({ f: 'json', limit: '1', id: site.id });
+        const response = await fetch(`${monitoringLocationsEndpoint}?${params.toString()}`);
+        if (!response.ok) throw new Error(`USGS station-details request failed (${response.status})`);
+        const result = await response.json();
+        return result.features && result.features[0] && result.features[0].properties;
+      }));
+      if (requestId !== riverRequestId) return;
+      riverResult.textContent = `Nearest reporting gauges · within 30 miles of ${latitude.toFixed(4)}° N, ${Math.abs(longitude).toFixed(4)}° W`;
+      nearby.forEach((site, index) => {
+        const details = metadata[index];
+        const name = details && details.monitoring_location_name
+          ? details.monitoring_location_name
+          : `USGS site ${site.id}`;
+        const card = document.createElement('article');
+        card.className = 'river-card';
+        const heading = document.createElement('h4');
+        heading.textContent = name;
+        card.append(heading);
+        const values = document.createElement('p');
+        const flowValue = Number(site.flow.value);
+        const flowText = Number.isFinite(flowValue)
+          ? `${flowValue.toLocaleString()} ${site.flow.unit_of_measure || 'ft^3/s'} flow`
+          : `Flow ${site.flow.value} ${site.flow.unit_of_measure || ''}`;
+        const stageValue = site.stage && Number(site.stage.value);
+        const stageText = site.stage
+          ? ` · ${Number.isFinite(stageValue) ? stageValue.toLocaleString() : site.stage.value} ${site.stage.unit_of_measure || 'ft'} stage`
+          : '';
+        values.textContent = `${flowText}${stageText}`;
+        card.append(values);
+        const observedAt = document.createElement('p');
+        const observedDate = new Date(site.flow.time);
+        const approval = site.flow.approval_status || 'Status not reported';
+        observedAt.textContent = `${(site.distance / 1609.344).toFixed(1)} mi away · ${Number.isNaN(observedDate.getTime()) ? 'observation time unavailable' : observedDate.toLocaleString()} · ${approval}`;
+        card.append(observedAt);
+        const link = document.createElement('a');
+        const siteNumber = /^USGS-(\d+)$/.exec(site.id);
+        if (siteNumber) {
+          link.href = `https://waterdata.usgs.gov/nwis/uv?site_no=${siteNumber[1]}`;
+          link.target = '_blank';
+          link.rel = 'noreferrer';
+          link.textContent = `USGS site ${siteNumber[1]} ↗`;
+          card.append(link);
+        } else {
+          const siteLabel = document.createElement('p');
+          siteLabel.textContent = site.id;
+          card.append(siteLabel);
+        }
+        riverReadings.append(card);
+        L.circleMarker([site.latitude, site.longitude], {
+          pane: 'riverPane', radius: 6, color: '#18231c', weight: 2, fillColor: '#d88753', fillOpacity: 1
+        }).addTo(riverMarkerLayer);
+      });
+      statusElement.textContent = 'Nearby USGS river-gauge readings shown';
+    } catch (error) {
+      if (requestId !== riverRequestId) return;
+      console.error('Unable to load nearby USGS river gauges:', error);
+      riverResult.textContent = error.message || 'Unable to load nearby USGS river gauges.';
+    }
+  }
+  function clearRiverPulse() {
+    riverRequestId += 1;
+    riverMarkerLayer.clearLayers();
+    riverReadings.replaceChildren();
+    riverResult.textContent = 'Turn on River pulse, then click a point inside South Carolina.';
+    riverPanel.hidden = !isFindingRivers;
+  }
   function clearWatershed() {
     watershedRequestId += 1;
     if (watershedShape) map.removeLayer(watershedShape);
@@ -551,6 +713,13 @@ if (typeof L === 'undefined') {
     const enabled = watershedToggle.getAttribute('aria-pressed') !== 'true';
     isFindingWatershed = enabled;
     if (!enabled) watershedRequestId += 1;
+    probeRequestId += 1;
+    isFindingRivers = false;
+    riverToggle.setAttribute('aria-pressed', 'false');
+    riverToggle.textContent = '〰 River pulse';
+    riverToggle.disabled = enabled;
+    riverPanel.hidden = true;
+    clearRiverPulse();
     watershedToggle.setAttribute('aria-pressed', String(enabled));
     watershedToggle.textContent = enabled ? '× Stop watershed finder' : '⌁ Watershed finder';
     isProbingElevation = false;
@@ -574,8 +743,42 @@ if (typeof L === 'undefined') {
     }
   });
   watershedClearButton.addEventListener('click', clearWatershed);
+  riverToggle.addEventListener('click', () => {
+    const enabled = riverToggle.getAttribute('aria-pressed') !== 'true';
+    isFindingRivers = enabled;
+    probeRequestId += 1;
+    riverToggle.setAttribute('aria-pressed', String(enabled));
+    riverToggle.textContent = enabled ? '× Stop River pulse' : '〰 River pulse';
+    riverPanel.hidden = !enabled;
+    isProbingElevation = false;
+    probeToggle.setAttribute('aria-pressed', 'false');
+    probeToggle.textContent = '⌖ Probe elevation';
+    probeToggle.disabled = enabled;
+    probePanel.hidden = true;
+    isFindingWatershed = false;
+    watershedToggle.setAttribute('aria-pressed', 'false');
+    watershedToggle.textContent = '⌁ Watershed finder';
+    watershedToggle.disabled = enabled;
+    clearWatershed();
+    isDrawingProfile = false;
+    map.doubleClickZoom.enable();
+    profileStartButton.disabled = enabled;
+    profileStartButton.textContent = '＋ Draw elevation profile';
+    profileFinishButton.disabled = true;
+    if (enabled) {
+      clearRiverPulse();
+      riverPanel.hidden = false;
+      profileHint.textContent = 'Click inside South Carolina to find nearby USGS stream gauges.';
+    } else {
+      probeToggle.disabled = !stateRing;
+      watershedToggle.disabled = !stateRing;
+      profileHint.textContent = 'Draw a line on the map to see its elevation.';
+    }
+  });
+  riverClearButton.addEventListener('click', clearRiverPulse);
   probeToggle.addEventListener('click', () => {
     isProbingElevation = !isProbingElevation;
+    watershedRequestId += 1;
     if (isProbingElevation && isDrawingProfile) {
       isDrawingProfile = false;
       map.doubleClickZoom.enable();
@@ -587,6 +790,12 @@ if (typeof L === 'undefined') {
     watershedToggle.textContent = '⌁ Watershed finder';
     isFindingWatershed = false;
     watershedToggle.disabled = isProbingElevation;
+    isFindingRivers = false;
+    riverToggle.setAttribute('aria-pressed', 'false');
+    riverToggle.textContent = '〰 River pulse';
+    riverToggle.disabled = isProbingElevation;
+    riverPanel.hidden = true;
+    clearRiverPulse();
     profileStartButton.disabled = isProbingElevation;
     profileFinishButton.disabled = isProbingElevation || !isDrawingProfile;
     profileHint.textContent = isProbingElevation
@@ -743,6 +952,10 @@ if (typeof L === 'undefined') {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
   map.on('click', event => {
+    if (isFindingRivers) {
+      findRiversAt(event.latlng);
+      return;
+    }
     if (isFindingWatershed) {
       findWatershedAt(event.latlng);
       return;
@@ -918,6 +1131,7 @@ if (typeof L === 'undefined') {
       stateRing = stateFeature.geometry.coordinates[0].map(([longitude, latitude]) => [latitude, longitude]);
       probeToggle.disabled = false;
       watershedToggle.disabled = false;
+      riverToggle.disabled = false;
       const maskPane = map.createPane('stateMaskPane');
       maskPane.style.zIndex = '420';
       const worldRing = [[-85, -180], [-85, 180], [85, 180], [85, -180], [-85, -180]];

@@ -32,6 +32,10 @@ const profileSummary = document.querySelector('#profile-summary');
 const swipeToggle = document.querySelector('#swipe-toggle');
 const imageryDateLabel = document.querySelector('#imagery-date-label');
 const imageryDate = document.querySelector('#imagery-date');
+const historyControls = document.querySelector('#history-controls');
+const historyPlayButton = document.querySelector('#history-play');
+const historyRange = document.querySelector('#history-range');
+const historyDate = document.querySelector('#history-date');
 const swipeRangeLabel = document.querySelector('#swipe-range-label');
 const swipeRange = document.querySelector('#swipe-range');
 const swipeValue = document.querySelector('#swipe-value');
@@ -149,6 +153,7 @@ if (typeof L === 'undefined') {
     ['18966', '2016-12-20'],
     ['5844', '2014-12-30']
   ]);
+  const archivedReleaseIds = [...waybackReleases.keys()].reverse();
   const currentImageryUrl = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
   const waybackImageryUrl = 'https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{release}/{z}/{y}/{x}';
   let imageryLayer;
@@ -167,12 +172,29 @@ if (typeof L === 'undefined') {
     });
   }
   imageryLayer = createImageryLayer();
+  let timeLapseTimer;
+  function stopTimeLapse() {
+    if (timeLapseTimer) window.clearInterval(timeLapseTimer);
+    timeLapseTimer = undefined;
+    historyPlayButton.textContent = '▶ Play time-lapse';
+    historyPlayButton.setAttribute('aria-pressed', 'false');
+  }
+  function syncHistoryControls() {
+    const releaseIndex = archivedReleaseIds.indexOf(imageryDate.value);
+    historyRange.value = String(releaseIndex < 0 ? archivedReleaseIds.length - 1 : releaseIndex);
+    historyDate.value = releaseIndex < 0 ? '—' : waybackReleases.get(imageryDate.value);
+    historyPlayButton.disabled = releaseIndex < 0;
+  }
   function updateImageryLabel() {
     const option = imageryDate.options[imageryDate.selectedIndex];
     swipeDivider.querySelector('span').textContent = `← ${option.textContent.replace('Wayback release · ', 'WAYBACK · ').replace(' (latest)', '')}`;
   }
   updateImageryLabel();
-  imageryDate.addEventListener('change', () => {
+  syncHistoryControls();
+  function selectImagery(release, stopPlayback = true) {
+    if (stopPlayback) stopTimeLapse();
+    imageryDate.value = release;
+    syncHistoryControls();
     updateImageryLabel();
     const enabled = map.hasLayer(imageryLayer);
     if (enabled) map.removeLayer(imageryLayer);
@@ -182,6 +204,31 @@ if (typeof L === 'undefined') {
     statusElement.textContent = imageryDate.value === 'current'
       ? 'Current Esri imagery shown in comparison'
       : `Esri Wayback imagery release ${waybackReleases.get(imageryDate.value)} shown`;
+  }
+  imageryDate.addEventListener('change', () => selectImagery(imageryDate.value));
+  historyRange.addEventListener('input', () => {
+    selectImagery(archivedReleaseIds[Number(historyRange.value)]);
+  });
+  historyPlayButton.addEventListener('click', () => {
+    if (timeLapseTimer) {
+      stopTimeLapse();
+      return;
+    }
+    let releaseIndex = archivedReleaseIds.indexOf(imageryDate.value);
+    if (releaseIndex < 0 || releaseIndex === archivedReleaseIds.length - 1) {
+      releaseIndex = 0;
+      selectImagery(archivedReleaseIds[releaseIndex], false);
+    }
+    historyPlayButton.textContent = 'Ⅱ Pause time-lapse';
+    historyPlayButton.setAttribute('aria-pressed', 'true');
+    timeLapseTimer = window.setInterval(() => {
+      releaseIndex += 1;
+      if (releaseIndex >= archivedReleaseIds.length) {
+        stopTimeLapse();
+        return;
+      }
+      selectImagery(archivedReleaseIds[releaseIndex], false);
+    }, 2400);
   });
   function updateSwipe(position) {
     comparePane.style.clipPath = `inset(0 ${100 - position}% 0 0)`;
@@ -197,9 +244,11 @@ if (typeof L === 'undefined') {
     swipeToggle.setAttribute('aria-pressed', String(enabled));
     swipeToggle.textContent = enabled ? 'Hide imagery comparison' : 'Compare imagery ↔ terrain';
     imageryDateLabel.hidden = !enabled;
+    historyControls.hidden = !enabled;
     swipeRangeLabel.hidden = !enabled;
     swipeDivider.hidden = !enabled;
     if (enabled) map.invalidateSize();
+    else stopTimeLapse();
   });
 
   const profileLayer = L.featureGroup().addTo(map);

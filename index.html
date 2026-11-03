@@ -87,6 +87,13 @@
               <option value="current">Current imagery (not archived)</option>
             </select>
           </label>
+          <div class="history-controls" id="history-controls" hidden>
+            <button class="map-tool-button secondary" id="history-play" type="button" aria-pressed="false">▶ Play time-lapse</button>
+            <label for="history-range">TIME MACHINE
+              <input id="history-range" type="range" min="0" max="6" step="1" value="6" aria-label="Scrub archived imagery releases">
+              <output id="history-date" for="history-range">2026-10-29</output>
+            </label>
+          </div>
           <label id="swipe-range-label" for="swipe-range" hidden>Swipe position <input id="swipe-range" type="range" min="5" max="95" value="50"><span id="swipe-value">50%</span></label>
         </div>
       </div>

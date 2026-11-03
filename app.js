@@ -30,6 +30,8 @@ const profilePanel = document.querySelector('#profile-panel');
 const profileCanvas = document.querySelector('#profile-chart');
 const profileSummary = document.querySelector('#profile-summary');
 const swipeToggle = document.querySelector('#swipe-toggle');
+const imageryDateLabel = document.querySelector('#imagery-date-label');
+const imageryDate = document.querySelector('#imagery-date');
 const swipeRangeLabel = document.querySelector('#swipe-range-label');
 const swipeRange = document.querySelector('#swipe-range');
 const swipeValue = document.querySelector('#swipe-value');
@@ -138,10 +140,48 @@ if (typeof L === 'undefined') {
   const comparePane = map.createPane('comparePane');
   comparePane.style.zIndex = '415';
   comparePane.style.pointerEvents = 'none';
-  const imageryLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-    pane: 'comparePane',
-    maxZoom: 19,
-    attribution: 'Imagery &copy; Esri, Vantor, Earthstar Geographics, and the GIS User Community'
+  const waybackReleases = new Map([
+    ['43291', '2026-10-29'],
+    ['16453', '2024-12-12'],
+    ['45134', '2022-12-14'],
+    ['29260', '2020-12-16'],
+    ['23448', '2018-12-14'],
+    ['18966', '2016-12-20'],
+    ['5844', '2014-12-30']
+  ]);
+  const currentImageryUrl = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+  const waybackImageryUrl = 'https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/MapServer/tile/{release}/{z}/{y}/{x}';
+  let imageryLayer;
+  function createImageryLayer() {
+    const release = imageryDate.value;
+    const isCurrent = release === 'current';
+    const url = isCurrent ? currentImageryUrl : waybackImageryUrl.replace('{release}', release);
+    const date = waybackReleases.get(release);
+    const attribution = isCurrent
+      ? 'Imagery &copy; Esri, Vantor, Earthstar Geographics, and the GIS User Community'
+      : `Imagery &copy; <a href="https://livingatlas.arcgis.com/wayback/" target="_blank" rel="noreferrer">Esri World Imagery Wayback</a> · Release ${date}`;
+    return L.tileLayer(url, {
+      pane: 'comparePane',
+      maxZoom: 19,
+      attribution
+    });
+  }
+  imageryLayer = createImageryLayer();
+  function updateImageryLabel() {
+    const option = imageryDate.options[imageryDate.selectedIndex];
+    swipeDivider.querySelector('span').textContent = `← ${option.textContent.replace('Wayback release · ', 'WAYBACK · ').replace(' (latest)', '')}`;
+  }
+  updateImageryLabel();
+  imageryDate.addEventListener('change', () => {
+    updateImageryLabel();
+    const enabled = map.hasLayer(imageryLayer);
+    if (enabled) map.removeLayer(imageryLayer);
+    imageryLayer = createImageryLayer();
+    if (!enabled) return;
+    imageryLayer.addTo(map);
+    statusElement.textContent = imageryDate.value === 'current'
+      ? 'Current Esri imagery shown in comparison'
+      : `Esri Wayback imagery release ${waybackReleases.get(imageryDate.value)} shown`;
   });
   function updateSwipe(position) {
     comparePane.style.clipPath = `inset(0 ${100 - position}% 0 0)`;
@@ -155,7 +195,8 @@ if (typeof L === 'undefined') {
     if (enabled) imageryLayer.addTo(map);
     else map.removeLayer(imageryLayer);
     swipeToggle.setAttribute('aria-pressed', String(enabled));
-    swipeToggle.textContent = enabled ? 'Hide aerial comparison' : 'Compare aerial ↔ terrain';
+    swipeToggle.textContent = enabled ? 'Hide imagery comparison' : 'Compare imagery ↔ terrain';
+    imageryDateLabel.hidden = !enabled;
     swipeRangeLabel.hidden = !enabled;
     swipeDivider.hidden = !enabled;
     if (enabled) map.invalidateSize();

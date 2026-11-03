@@ -1,6 +1,6 @@
 # South Carolina LiDAR Atlas
 
-A responsive, statewide terrain atlas for South Carolina. The interactive map is centered and bounded around the Palmetto State, with live USGS 3DEP elevation styles, a swipeable aerial comparison, elevation profiles drawn along user-selected routes, a generalized state outline, and searchable places.
+A responsive, statewide terrain atlas for South Carolina. The interactive map is centered and bounded around the Palmetto State, with live USGS 3DEP elevation styles, a swipeable current or historical imagery comparison, elevation profiles drawn along user-selected routes, a generalized state outline, and searchable places.
 
 ## Run locally
 
@@ -16,7 +16,7 @@ Then visit `http://localhost:8000`.
 
 - Terrain tiles and profile samples are dynamically rendered from the [USGS 3DEP ImageServer](https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer). Available map styles include hillshade, multidirectional hillshade, tinted elevation, slope, aspect, and contours. The service is a multi-resolution, multi-source bare-earth elevation service; not every location is necessarily LiDAR-derived. Consult the [USGS LiDAR Explorer](https://apps.nationalmap.gov/lidar-explorer/) for project coverage, survey source, and acquisition details.
 - The simplified South Carolina state outline is from [U.S. Census TIGERweb](https://tigerweb.geo.census.gov/).
-- The street basemap is © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright). Swipe comparison imagery is from Esri World Imagery; source credits are shown in the map attribution.
+- The street basemap is © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright). Swipe comparison imagery can use current Esri World Imagery or dated releases from [Esri World Imagery Wayback](https://livingatlas.arcgis.com/wayback/); source credits are shown in the map attribution. Wayback release dates are archive version dates, not necessarily image acquisition dates, and imagery coverage and capture dates vary by location.
 - Map controls use [Leaflet](https://leafletjs.com/).
 
 Elevation profiles use the USGS ImageServer `getSamples` operation and chart sampled points along a drawn line. Map imagery and elevation profiles load from their source services at runtime and require an internet connection. No paid or paywalled imagery is copied or bundled.

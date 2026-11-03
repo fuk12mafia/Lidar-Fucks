@@ -74,7 +74,19 @@
         </div>
         <p class="tool-hint" id="profile-hint" aria-live="polite">Draw a line on the map to see its elevation.</p>
         <div class="swipe-controls">
-          <button class="map-tool-button secondary" id="swipe-toggle" type="button" aria-pressed="false">Compare aerial ↔ terrain</button>
+          <button class="map-tool-button secondary" id="swipe-toggle" type="button" aria-pressed="false">Compare imagery ↔ terrain</button>
+          <label id="imagery-date-label" for="imagery-date" hidden>Imagery version
+            <select id="imagery-date">
+              <option value="43291">Wayback release · 2026-10-29 (latest)</option>
+              <option value="16453">Wayback release · 2024-12-12</option>
+              <option value="45134">Wayback release · 2022-12-14</option>
+              <option value="29260">Wayback release · 2020-12-16</option>
+              <option value="23448">Wayback release · 2018-12-14</option>
+              <option value="18966">Wayback release · 2016-12-20</option>
+              <option value="5844">Wayback release · 2014-12-30</option>
+              <option value="current">Current imagery (not archived)</option>
+            </select>
+          </label>
           <label id="swipe-range-label" for="swipe-range" hidden>Swipe position <input id="swipe-range" type="range" min="5" max="95" value="50"><span id="swipe-value">50%</span></label>
         </div>
       </div>
@@ -86,7 +98,7 @@
         <div class="map-wrap"><div id="state-map" role="application" aria-label="Interactive map of South Carolina with USGS elevation hillshade"></div><div class="map-status" id="map-status" role="status" aria-live="polite">Loading South Carolina terrain…</div><div class="map-caption" id="map-caption">USGS 3DEP BARE-EARTH HILLSHADE</div><div class="swipe-divider" id="swipe-divider" hidden><span>← AERIAL</span><i></i><span>TERRAIN →</span></div></div>
         <aside class="place-panel" aria-labelledby="places-title"><div class="place-panel-head"><p class="eyebrow dark-eyebrow">JUMP TO A PLACE</p><h3 id="places-title">Start exploring</h3></div><label class="place-search"><span aria-hidden="true">⌕</span><span class="visually-hidden">Find a South Carolina place</span><input id="place-search" type="search" placeholder="City, park, or coast" autocomplete="off"></label><div class="place-list" id="place-list" aria-live="polite"></div><p class="place-panel-note">These are starting points, not limits. Drag and zoom the map to explore the rest of the state.</p></aside>
       </div>
-      <p class="source-note"><span>DATA NOTE</span> The statewide layer is the USGS 3D Elevation Program (3DEP) bare-earth elevation service. It combines source datasets at different resolutions; a location’s data is not necessarily LiDAR. View collection date, resolution, and confirmed LiDAR coverage in the <a href="https://apps.nationalmap.gov/lidar-explorer/" target="_blank" rel="noreferrer">USGS LiDAR Explorer ↗</a>. Basemap © OpenStreetMap contributors. State outline generalized from U.S. Census TIGERweb.</p>
+      <p class="source-note"><span>DATA NOTE</span> The statewide layer is the USGS 3D Elevation Program (3DEP) bare-earth elevation service. It combines source datasets at different resolutions; a location’s data is not necessarily LiDAR. View collection date, resolution, and confirmed LiDAR coverage in the <a href="https://apps.nationalmap.gov/lidar-explorer/" target="_blank" rel="noreferrer">USGS LiDAR Explorer ↗</a>. The optional imagery comparison includes historical releases from <a href="https://livingatlas.arcgis.com/wayback/" target="_blank" rel="noreferrer">Esri World Imagery Wayback ↗</a>. A Wayback date identifies the archive release, not necessarily the date the image was captured; acquisition dates and coverage vary by location. Basemap © OpenStreetMap contributors. State outline generalized from U.S. Census TIGERweb.</p>
     </section>
 
     <section class="method" id="about">

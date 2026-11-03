@@ -1,6 +1,6 @@
 # South Carolina LiDAR Atlas
 
-A responsive, statewide terrain atlas for South Carolina. The interactive map is centered and bounded around the Palmetto State, with live USGS 3DEP elevation styles, a swipeable current or historical imagery comparison with a playable archive time-lapse, a four-stop terrain-reading quest, elevation profiles drawn along user-selected routes, a generalized state outline, and searchable places.
+A responsive, statewide terrain atlas for South Carolina. The interactive map is centered and bounded around the Palmetto State, with live USGS 3DEP elevation styles, a swipeable current or historical imagery comparison with a playable archive time-lapse, a four-stop terrain-reading quest, playable sonification and CSV export for elevation profiles, a generalized state outline, and searchable places.
 
 ## Run locally
 
@@ -22,3 +22,5 @@ Then visit `http://localhost:8000`.
 - Map controls use [Leaflet](https://leafletjs.com/).
 
 Elevation profiles use the USGS ImageServer `getSamples` operation and chart sampled points along a drawn line. Map imagery and elevation profiles load from their source services at runtime and require an internet connection. No paid or paywalled imagery is copied or bundled.
+
+The profile soundscape uses browser-generated tones rather than a recording: pitch follows sampled elevation and stereo position follows progress along the route. Profile CSV downloads include cumulative distance, elevation, and sample coordinates.

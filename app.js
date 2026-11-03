@@ -29,6 +29,8 @@ const profileHint = document.querySelector('#profile-hint');
 const profilePanel = document.querySelector('#profile-panel');
 const profileCanvas = document.querySelector('#profile-chart');
 const profileSummary = document.querySelector('#profile-summary');
+const profileListenButton = document.querySelector('#profile-listen');
+const profileDownloadButton = document.querySelector('#profile-download');
 const questStartButton = document.querySelector('#quest-start');
 const questPanel = document.querySelector('#quest-panel');
 const questProgress = document.querySelector('#quest-progress');
@@ -264,6 +266,20 @@ if (typeof L === 'undefined') {
   let isDrawingProfile = false;
   let profilePoints = [];
   let profileRequestId = 0;
+  let profileSamples = [];
+  let profileAudioContext;
+  let profileAudioNodes = [];
+  let profileAudioTimer;
+  function stopProfileAudio() {
+    if (profileAudioTimer) window.clearTimeout(profileAudioTimer);
+    profileAudioTimer = undefined;
+    profileAudioNodes.forEach(node => {
+      if (!node.ended) node.oscillator.stop();
+    });
+    profileAudioNodes = [];
+    profileListenButton.textContent = '♫ Listen to the land';
+    profileListenButton.setAttribute('aria-pressed', 'false');
+  }
   function drawProfileLine() {
     profileLayer.clearLayers();
     profilePoints.forEach(point => L.circleMarker(point, {
@@ -275,6 +291,10 @@ if (typeof L === 'undefined') {
   }
   function startProfile() {
     profileRequestId += 1;
+    stopProfileAudio();
+    profileSamples = [];
+    profileListenButton.disabled = true;
+    profileDownloadButton.disabled = true;
     profilePoints = [];
     profileLayer.clearLayers();
     profilePanel.hidden = true;
@@ -333,10 +353,13 @@ if (typeof L === 'undefined') {
         if (index) distance += distanceBetween(samples[index - 1], sample);
         sample.distance = distance;
       });
+      profileSamples = samples;
       drawElevationChart(samples);
       const minimum = Math.min(...samples.map(sample => sample.elevation));
       const maximum = Math.max(...samples.map(sample => sample.elevation));
       profileSummary.textContent = `${(distance / 1609.344).toFixed(2)} mi · ${Math.round(minimum)}–${Math.round(maximum)} ft · ${samples.length} USGS samples`;
+      profileListenButton.disabled = false;
+      profileDownloadButton.disabled = false;
       profileHint.textContent = 'Elevation profile ready. Click “Draw elevation profile” to start a new line.';
     } catch (error) {
       if (requestId !== profileRequestId) return;
@@ -412,6 +435,78 @@ if (typeof L === 'undefined') {
     context.textAlign = 'right';
     context.fillText(`${(samples[samples.length - 1].distance / 1609.344).toFixed(1)} mi`, width - padding.right, height - 8);
   }
+  profileListenButton.addEventListener('click', async () => {
+    if (profileAudioNodes.length) {
+      stopProfileAudio();
+      profileSummary.textContent = 'Terrain soundscape stopped.';
+      return;
+    }
+    if (profileSamples.length < 2) return;
+    profileListenButton.disabled = true;
+    try {
+      const AudioContextConstructor = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextConstructor) throw new Error('This browser does not support audio playback.');
+      profileAudioContext = profileAudioContext || new AudioContextConstructor();
+      await profileAudioContext.resume();
+      const minElevation = Math.min(...profileSamples.map(sample => sample.elevation));
+      const elevationRange = Math.max(...profileSamples.map(sample => sample.elevation)) - minElevation;
+      const startTime = profileAudioContext.currentTime + 0.08;
+      const interval = 0.22;
+      profileAudioNodes = profileSamples.map((sample, index) => {
+        const oscillator = profileAudioContext.createOscillator();
+        const gain = profileAudioContext.createGain();
+        const panner = profileAudioContext.createStereoPanner();
+        const normalizedElevation = elevationRange
+          ? (sample.elevation - minElevation) / elevationRange
+          : 0.5;
+        const noteStart = startTime + index * interval;
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(220 + normalizedElevation * 440, noteStart);
+        gain.gain.setValueAtTime(0, noteStart);
+        gain.gain.linearRampToValueAtTime(0.055, noteStart + 0.025);
+        gain.gain.exponentialRampToValueAtTime(0.001, noteStart + 0.19);
+        panner.pan.setValueAtTime(profileSamples.length > 1 ? index / (profileSamples.length - 1) * 2 - 1 : 0, noteStart);
+        oscillator.connect(gain).connect(panner).connect(profileAudioContext.destination);
+        const node = { oscillator, ended: false };
+        oscillator.onended = () => {
+          node.ended = true;
+          if (profileAudioNodes.length && profileAudioNodes.every(item => item.ended)) stopProfileAudio();
+        };
+        oscillator.start(noteStart);
+        oscillator.stop(noteStart + 0.21);
+        return node;
+      });
+      profileListenButton.textContent = '■ Stop soundscape';
+      profileListenButton.disabled = false;
+      profileListenButton.setAttribute('aria-pressed', 'true');
+      profileSummary.textContent = 'Listening: low ground sounds low; higher terrain rises in pitch and moves along the route.';
+      profileAudioTimer = window.setTimeout(stopProfileAudio, profileSamples.length * interval * 1000 + 500);
+    } catch (error) {
+      stopProfileAudio();
+      profileListenButton.disabled = profileSamples.length < 2;
+      console.error('Unable to play the terrain soundscape:', error);
+      profileSummary.textContent = error.message || 'Unable to play audio in this browser.';
+    }
+  });
+  profileDownloadButton.addEventListener('click', () => {
+    if (profileSamples.length < 2) return;
+    const rows = [
+      'distance_miles,elevation_feet,latitude,longitude',
+      ...profileSamples.map(sample => [
+        (sample.distance / 1609.344).toFixed(4),
+        sample.elevation.toFixed(2),
+        sample.lat.toFixed(6),
+        sample.lon.toFixed(6)
+      ].join(','))
+    ];
+    const file = new Blob([rows.join('\r\n')], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(file);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'south-carolina-elevation-profile.csv';
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
   map.on('click', event => {
     if (!isDrawingProfile) return;
     if (profilePoints.length >= 20) {
@@ -429,12 +524,16 @@ if (typeof L === 'undefined') {
   profileFinishButton.addEventListener('click', finishProfile);
   profileClearButton.addEventListener('click', () => {
     profileRequestId += 1;
+    stopProfileAudio();
+    profileSamples = [];
     isDrawingProfile = false;
     map.doubleClickZoom.enable();
     profilePoints = [];
     profileLayer.clearLayers();
     profilePanel.hidden = true;
     profileSummary.textContent = 'Draw at least two points to sample the terrain.';
+    profileListenButton.disabled = true;
+    profileDownloadButton.disabled = true;
     profileHint.textContent = 'Draw a line on the map to see its elevation.';
     profileStartButton.disabled = false;
     profileStartButton.textContent = '＋ Draw elevation profile';

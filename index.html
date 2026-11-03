@@ -114,7 +114,15 @@
       </section>
       <div class="profile-panel" id="profile-panel" hidden>
         <div class="profile-chart-wrap"><canvas id="profile-chart" role="img" aria-label="Elevation profile graph"></canvas></div>
-        <div class="profile-footer"><p id="profile-summary" aria-live="polite">Draw at least two points to sample the terrain.</p><span>HORIZONTAL · MILES &nbsp; / &nbsp; ELEVATION · FEET</span></div>
+        <div class="profile-footer">
+          <p id="profile-summary" aria-live="polite">Draw at least two points to sample the terrain.</p>
+          <div class="profile-actions">
+            <span>HORIZONTAL · MILES &nbsp; / &nbsp; ELEVATION · FEET</span>
+            <span class="profile-audio-note">SOUND · PITCH = ELEVATION / PAN = ROUTE</span>
+            <button class="map-tool-button secondary" id="profile-listen" type="button" disabled>♫ Listen to the land</button>
+            <button class="map-tool-button secondary" id="profile-download" type="button" disabled>↓ Download CSV</button>
+          </div>
+        </div>
       </div>
       <div class="map-layout">
         <div class="map-wrap"><div id="state-map" role="application" aria-label="Interactive map of South Carolina with USGS elevation hillshade"></div><div class="map-status" id="map-status" role="status" aria-live="polite">Loading South Carolina terrain…</div><div class="map-caption" id="map-caption">USGS 3DEP BARE-EARTH HILLSHADE</div><div class="swipe-divider" id="swipe-divider" hidden><span>← AERIAL</span><i></i><span>TERRAIN →</span></div></div>

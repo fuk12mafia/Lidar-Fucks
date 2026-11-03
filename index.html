@@ -10,6 +10,30 @@
   <link rel="preconnect" href="https://tile.openstreetmap.org">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
   <link rel="stylesheet" href="styles.css">
+  <style>
+    .swipe-controls label[hidden] { display: none; }
+    @media (max-width: 850px) {
+      .map-tools { align-items: flex-start; flex-direction: column; }
+      .profile-buttons { flex-wrap: wrap; }
+      .map-tools .swipe-controls { width: 100%; justify-content: space-between; }
+    }
+    @media (max-width: 640px) {
+      .map-tools { padding: 10px 6vw; }
+      .profile-buttons { gap: 6px; }
+      .map-tool-button { padding: 8px 9px; font-size: 8px; }
+      .tool-hint { font-size: 8px; }
+      .swipe-controls { align-items: flex-start; flex-direction: column; gap: 8px; }
+      .swipe-controls label { width: 100%; }
+      .swipe-controls input { flex: 1; }
+      .profile-panel { margin: 0 6vw 14px; }
+      .profile-footer { align-items: flex-start; flex-direction: column; gap: 6px; }
+      .profile-footer span { font-size: 7px; }
+      .leaflet-control-layers { max-width: 176px; }
+      .leaflet-control-layers-expanded { padding: 7px 8px; }
+      .leaflet-control-layers label { font-size: 9px; }
+      .leaflet-control-layers-list { max-height: 180px; overflow: auto; }
+    }
+  </style>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin="" defer></script>
   <script src="app.js" defer></script>
 </head>
@@ -42,8 +66,24 @@
     <section class="gallery-section map-section" aria-labelledby="map-title">
       <div class="gallery-head"><div><p class="eyebrow dark-eyebrow">THE STATEWIDE FIELD MAP</p><h2 id="map-title">Explore the whole state</h2></div><p class="gallery-count"><span>46</span> COUNTIES<br><span class="count-muted">LIVE 3DEP TERRAIN</span></p></div>
       <div class="map-toolbar"><p><span class="map-live-dot"></span> USGS ELEVATION · PAN AND ZOOM ANYWHERE IN SOUTH CAROLINA</p><label for="terrain-opacity">Terrain opacity <input id="terrain-opacity" type="range" min="0" max="100" value="72"><span id="opacity-value">72%</span></label></div>
+      <div class="map-tools" aria-label="Map tools">
+        <div class="profile-buttons">
+          <button class="map-tool-button" id="profile-start" type="button">＋ Draw elevation profile</button>
+          <button class="map-tool-button secondary" id="profile-finish" type="button" disabled>Finish line</button>
+          <button class="map-tool-button secondary" id="profile-clear" type="button" disabled>Clear</button>
+        </div>
+        <p class="tool-hint" id="profile-hint" aria-live="polite">Draw a line on the map to see its elevation.</p>
+        <div class="swipe-controls">
+          <button class="map-tool-button secondary" id="swipe-toggle" type="button" aria-pressed="false">Compare aerial ↔ terrain</button>
+          <label id="swipe-range-label" for="swipe-range" hidden>Swipe position <input id="swipe-range" type="range" min="5" max="95" value="50"><span id="swipe-value">50%</span></label>
+        </div>
+      </div>
+      <div class="profile-panel" id="profile-panel" hidden>
+        <div class="profile-chart-wrap"><canvas id="profile-chart" role="img" aria-label="Elevation profile graph"></canvas></div>
+        <div class="profile-footer"><p id="profile-summary" aria-live="polite">Draw at least two points to sample the terrain.</p><span>HORIZONTAL · MILES &nbsp; / &nbsp; ELEVATION · FEET</span></div>
+      </div>
       <div class="map-layout">
-        <div class="map-wrap"><div id="state-map" role="application" aria-label="Interactive map of South Carolina with USGS elevation hillshade"></div><div class="map-status" id="map-status" role="status" aria-live="polite">Loading South Carolina terrain…</div><div class="map-caption">USGS 3DEP BARE-EARTH HILLSHADE</div></div>
+        <div class="map-wrap"><div id="state-map" role="application" aria-label="Interactive map of South Carolina with USGS elevation hillshade"></div><div class="map-status" id="map-status" role="status" aria-live="polite">Loading South Carolina terrain…</div><div class="map-caption" id="map-caption">USGS 3DEP BARE-EARTH HILLSHADE</div><div class="swipe-divider" id="swipe-divider" hidden><span>← AERIAL</span><i></i><span>TERRAIN →</span></div></div>
         <aside class="place-panel" aria-labelledby="places-title"><div class="place-panel-head"><p class="eyebrow dark-eyebrow">JUMP TO A PLACE</p><h3 id="places-title">Start exploring</h3></div><label class="place-search"><span aria-hidden="true">⌕</span><span class="visually-hidden">Find a South Carolina place</span><input id="place-search" type="search" placeholder="City, park, or coast" autocomplete="off"></label><div class="place-list" id="place-list" aria-live="polite"></div><p class="place-panel-note">These are starting points, not limits. Drag and zoom the map to explore the rest of the state.</p></aside>
       </div>
       <p class="source-note"><span>DATA NOTE</span> The statewide layer is the USGS 3D Elevation Program (3DEP) bare-earth elevation service. It combines source datasets at different resolutions; a location’s data is not necessarily LiDAR. View collection date, resolution, and confirmed LiDAR coverage in the <a href="https://apps.nationalmap.gov/lidar-explorer/" target="_blank" rel="noreferrer">USGS LiDAR Explorer ↗</a>. Basemap © OpenStreetMap contributors. State outline generalized from U.S. Census TIGERweb.</p>

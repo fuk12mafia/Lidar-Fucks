@@ -1,4 +1,5 @@
 const endpoint = 'https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage';
+const sampleEndpoint = 'https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/getSamples';
 const stateBounds = [[32.0, -83.5], [35.35, -78.3]];
 const places = [
   { name: 'Greenville', region: 'Upstate', lat: 34.8526, lon: -82.3940, note: 'At the foot of the Blue Ridge foothills.' },
@@ -16,10 +17,23 @@ const places = [
 ];
 const mapElement = document.querySelector('#state-map');
 const statusElement = document.querySelector('#map-status');
+const mapCaption = document.querySelector('#map-caption');
 const searchElement = document.querySelector('#place-search');
 const listElement = document.querySelector('#place-list');
 const opacityInput = document.querySelector('#terrain-opacity');
 const opacityValue = document.querySelector('#opacity-value');
+const profileStartButton = document.querySelector('#profile-start');
+const profileFinishButton = document.querySelector('#profile-finish');
+const profileClearButton = document.querySelector('#profile-clear');
+const profileHint = document.querySelector('#profile-hint');
+const profilePanel = document.querySelector('#profile-panel');
+const profileCanvas = document.querySelector('#profile-chart');
+const profileSummary = document.querySelector('#profile-summary');
+const swipeToggle = document.querySelector('#swipe-toggle');
+const swipeRangeLabel = document.querySelector('#swipe-range-label');
+const swipeRange = document.querySelector('#swipe-range');
+const swipeValue = document.querySelector('#swipe-value');
+const swipeDivider = document.querySelector('#swipe-divider');
 
 if (typeof L === 'undefined') {
   statusElement.textContent = 'The map library did not load. Check your connection and reload the page.';
@@ -45,53 +59,288 @@ if (typeof L === 'undefined') {
   const terrainPane = map.createPane('terrainPane');
   terrainPane.style.zIndex = '410';
   terrainPane.style.pointerEvents = 'none';
-  const terrainLayer = L.tileLayer('', {
-    pane: 'terrainPane',
-    minZoom: 6,
-    maxZoom: 17,
-    tileSize: 256,
-    opacity: Number(opacityInput.value) / 100,
-    updateWhenIdle: true,
-    keepBuffer: 2,
-    crossOrigin: true,
-    attribution: '<a href="https://www.usgs.gov/3d-elevation-program">USGS 3DEP elevation</a>'
-  });
-  terrainLayer.getTileUrl = function (coords) {
-    const tilesAtZoom = Math.pow(2, coords.z);
-    const span = (2 * halfWorld) / tilesAtZoom;
-    const xmin = -halfWorld + coords.x * span;
-    const ymax = halfWorld - coords.y * span;
-    const bbox = [xmin, ymax - span, xmin + span, ymax].map(value => value.toFixed(2)).join(',');
-    const params = new URLSearchParams({
-      bbox,
-      bboxSR: '3857',
-      size: '256,256',
-      imageSR: '3857',
-      format: 'jpgpng',
-      f: 'image',
-      renderingRule: JSON.stringify({ rasterFunction: 'Hillshade Gray' })
+  const terrainStyles = [
+    { name: 'Hillshade', rasterFunction: 'Hillshade Gray' },
+    { name: 'Multidirectional hillshade', rasterFunction: 'Hillshade Multidirectional' },
+    { name: 'Tinted elevation', rasterFunction: 'Hillshade Elevation Tinted' },
+    { name: 'Slope', rasterFunction: 'Slope Map' },
+    { name: 'Aspect', rasterFunction: 'Aspect Map' },
+    { name: '25 ft contours', rasterFunction: 'Contour 25' }
+  ];
+  const terrainLayers = new Map();
+  const mapStyles = new Map();
+  terrainStyles.forEach(style => {
+    const layer = L.tileLayer('', {
+      pane: 'terrainPane',
+      minZoom: 6,
+      maxZoom: 17,
+      tileSize: 256,
+      opacity: Number(opacityInput.value) / 100,
+      updateWhenIdle: true,
+      keepBuffer: 2,
+      crossOrigin: true,
+      attribution: '<a href="https://www.usgs.gov/3d-elevation-program">USGS 3DEP elevation</a>'
     });
-    return `${endpoint}?${params.toString()}`;
-  };
-  terrainLayer.addTo(map);
+    layer.getTileUrl = coords => {
+      const tilesAtZoom = Math.pow(2, coords.z);
+      const span = (2 * halfWorld) / tilesAtZoom;
+      const xmin = -halfWorld + coords.x * span;
+      const ymax = halfWorld - coords.y * span;
+      const bbox = [xmin, ymax - span, xmin + span, ymax].map(value => value.toFixed(2)).join(',');
+      const params = new URLSearchParams({
+        bbox,
+        bboxSR: '3857',
+        size: '256,256',
+        imageSR: '3857',
+        format: 'jpgpng',
+        f: 'image',
+        renderingRule: JSON.stringify({ rasterFunction: style.rasterFunction })
+      });
+      return `${endpoint}?${params.toString()}`;
+    };
+    terrainLayers.set(style.name, layer);
+    mapStyles.set(style.name, L.layerGroup([streetLayer, layer]));
+  });
+  const mapStyleChoices = { 'Street map': streetLayer };
+  mapStyles.forEach((layerGroup, name) => { mapStyleChoices[name] = layerGroup; });
+  const mapStyleNames = new Map([...mapStyles].map(([name, layer]) => [layer, name]));
   let loadedTerrain = false;
-  terrainLayer.on('tileload', () => {
-    loadedTerrain = true;
-    statusElement.textContent = 'USGS 3DEP terrain layer active';
+  terrainLayers.forEach((layer, name) => {
+    layer.on('tileload', () => {
+      if (!map.hasLayer(layer)) return;
+      loadedTerrain = true;
+      statusElement.textContent = `USGS 3DEP ${name.toLowerCase()} active`;
+    });
+    layer.on('tileerror', () => {
+      if (map.hasLayer(layer) && !loadedTerrain) statusElement.textContent = 'USGS terrain tiles are temporarily unavailable. The street map is still usable.';
+    });
   });
-  let failedTiles = 0;
-  terrainLayer.on('tileerror', () => {
-    failedTiles += 1;
-    if (!loadedTerrain && failedTiles >= 4) {
-      statusElement.textContent = 'USGS terrain tiles are temporarily unavailable. The street map is still usable.';
+  mapStyles.get('Hillshade').addTo(map);
+  L.control.layers(mapStyleChoices, {}, { collapsed: false, position: 'topright' }).addTo(map);
+  map.on('baselayerchange', event => {
+    const styleName = mapStyleNames.get(event.layer);
+    if (styleName) {
+      statusElement.textContent = `USGS 3DEP ${styleName.toLowerCase()} selected`;
+      mapCaption.textContent = `USGS 3DEP · ${styleName.toUpperCase()}`;
+    } else {
+      statusElement.textContent = 'Street map selected';
+      mapCaption.textContent = 'OPENSTREETMAP BASEMAP';
     }
+    map.invalidateSize();
   });
-  map.on('baselayerchange', event => { if (event.layer === streetLayer) map.invalidateSize(); });
 
   opacityInput.addEventListener('input', () => {
     const opacity = Number(opacityInput.value) / 100;
-    terrainLayer.setOpacity(opacity);
+    terrainLayers.forEach(layer => layer.setOpacity(opacity));
     opacityValue.textContent = `${opacityInput.value}%`;
+  });
+
+  const comparePane = map.createPane('comparePane');
+  comparePane.style.zIndex = '415';
+  comparePane.style.pointerEvents = 'none';
+  const imageryLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    pane: 'comparePane',
+    maxZoom: 19,
+    attribution: 'Imagery &copy; Esri, Vantor, Earthstar Geographics, and the GIS User Community'
+  });
+  function updateSwipe(position) {
+    comparePane.style.clipPath = `inset(0 ${100 - position}% 0 0)`;
+    swipeDivider.style.left = `${position}%`;
+    swipeValue.textContent = `${position}%`;
+  }
+  updateSwipe(Number(swipeRange.value));
+  swipeRange.addEventListener('input', () => updateSwipe(Number(swipeRange.value)));
+  swipeToggle.addEventListener('click', () => {
+    const enabled = !map.hasLayer(imageryLayer);
+    if (enabled) imageryLayer.addTo(map);
+    else map.removeLayer(imageryLayer);
+    swipeToggle.setAttribute('aria-pressed', String(enabled));
+    swipeToggle.textContent = enabled ? 'Hide aerial comparison' : 'Compare aerial ↔ terrain';
+    swipeRangeLabel.hidden = !enabled;
+    swipeDivider.hidden = !enabled;
+    if (enabled) map.invalidateSize();
+  });
+
+  const profileLayer = L.featureGroup().addTo(map);
+  let isDrawingProfile = false;
+  let profilePoints = [];
+  let profileRequestId = 0;
+  function drawProfileLine() {
+    profileLayer.clearLayers();
+    profilePoints.forEach(point => L.circleMarker(point, {
+      radius: 5, color: '#25392d', weight: 2, fillColor: '#bdcd72', fillOpacity: 1
+    }).addTo(profileLayer));
+    if (profilePoints.length > 1) {
+      L.polyline(profilePoints, { color: '#bdcd72', weight: 3, opacity: 1 }).addTo(profileLayer);
+    }
+  }
+  function startProfile() {
+    profileRequestId += 1;
+    profilePoints = [];
+    profileLayer.clearLayers();
+    profilePanel.hidden = true;
+    profileHint.textContent = 'Click along the map to draw a line. Choose at least two points.';
+    profileStartButton.textContent = 'Drawing… click map';
+    profileStartButton.disabled = true;
+    profileFinishButton.disabled = false;
+    profileClearButton.disabled = false;
+    isDrawingProfile = true;
+    map.doubleClickZoom.disable();
+  }
+  async function finishProfile() {
+    if (!isDrawingProfile) return;
+    isDrawingProfile = false;
+    map.doubleClickZoom.enable();
+    profileStartButton.disabled = false;
+    profileStartButton.textContent = '＋ Draw elevation profile';
+    profileFinishButton.disabled = true;
+    if (profilePoints.length < 2) {
+      profileHint.textContent = 'Add at least two points to sample the terrain.';
+      return;
+    }
+    const requestId = ++profileRequestId;
+    profilePanel.hidden = false;
+    profileSummary.textContent = 'Sampling up to 32 USGS elevation points along your line…';
+    profileHint.textContent = 'Line complete. Draw another to replace this profile.';
+    try {
+      const geometry = JSON.stringify({
+        paths: [profilePoints.map(point => [point.lng, point.lat])],
+        spatialReference: { wkid: 4326 }
+      });
+      const params = new URLSearchParams({
+        geometry,
+        geometryType: 'esriGeometryPolyline',
+        sampleCount: '32',
+        interpolation: 'RSP_BilinearInterpolation',
+        outSR: '4326',
+        returnFirstValueOnly: 'true',
+        f: 'json'
+      });
+      const response = await fetch(`${sampleEndpoint}?${params.toString()}`);
+      if (!response.ok) throw new Error(`Elevation request failed (${response.status})`);
+      const result = await response.json();
+      if (requestId !== profileRequestId) return;
+      const samples = (result.samples || [])
+        .filter(sample => Number.isFinite(Number(sample.value)))
+        .sort((a, b) => a.locationId - b.locationId)
+        .map(sample => ({
+          elevation: Number(sample.value) * 3.28084,
+          lat: sample.location.y,
+          lon: sample.location.x
+        }));
+      if (samples.length < 2) throw new Error('Not enough elevation samples were available for this line.');
+      let distance = 0;
+      samples.forEach((sample, index) => {
+        if (index) distance += distanceBetween(samples[index - 1], sample);
+        sample.distance = distance;
+      });
+      drawElevationChart(samples);
+      const minimum = Math.min(...samples.map(sample => sample.elevation));
+      const maximum = Math.max(...samples.map(sample => sample.elevation));
+      profileSummary.textContent = `${(distance / 1609.344).toFixed(2)} mi · ${Math.round(minimum)}–${Math.round(maximum)} ft · ${samples.length} USGS samples`;
+      profileHint.textContent = 'Elevation profile ready. Click “Draw elevation profile” to start a new line.';
+    } catch (error) {
+      if (requestId !== profileRequestId) return;
+      console.error('Unable to build elevation profile:', error);
+      profileSummary.textContent = error.message || 'Unable to load elevation samples.';
+      profileHint.textContent = 'Could not load profile data. Please try a shorter line.';
+    }
+  }
+  function distanceBetween(first, second) {
+    const radians = value => value * Math.PI / 180;
+    const dLat = radians(second.lat - first.lat);
+    const dLon = radians(second.lon - first.lon);
+    const a = Math.sin(dLat / 2) ** 2 +
+      Math.cos(radians(first.lat)) * Math.cos(radians(second.lat)) * Math.sin(dLon / 2) ** 2;
+    return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+  function drawElevationChart(samples) {
+    const context = profileCanvas.getContext('2d');
+    const bounds = profileCanvas.getBoundingClientRect();
+    const ratio = window.devicePixelRatio || 1;
+    profileCanvas.width = Math.max(1, Math.round(bounds.width * ratio));
+    profileCanvas.height = Math.max(1, Math.round(bounds.height * ratio));
+    context.scale(ratio, ratio);
+    const width = bounds.width;
+    const height = bounds.height;
+    const padding = { top: 16, right: 18, bottom: 32, left: 48 };
+    const values = samples.map(sample => sample.elevation);
+    const minimum = Math.floor(Math.min(...values) / 50) * 50;
+    const maximum = Math.ceil(Math.max(...values) / 50) * 50 || minimum + 50;
+    const range = Math.max(maximum - minimum, 50);
+    const x = value => padding.left + value / Math.max(samples[samples.length - 1].distance, 1) * (width - padding.left - padding.right);
+    const y = value => height - padding.bottom - (value - minimum) / range * (height - padding.top - padding.bottom);
+    context.clearRect(0, 0, width, height);
+    context.font = '9px "DM Mono", monospace';
+    context.fillStyle = '#777c70';
+    context.strokeStyle = 'rgba(19,24,19,.14)';
+    context.lineWidth = 1;
+    for (let tick = 0; tick <= 2; tick += 1) {
+      const elevation = minimum + range * tick / 2;
+      const posY = y(elevation);
+      context.beginPath();
+      context.moveTo(padding.left, posY);
+      context.lineTo(width - padding.right, posY);
+      context.stroke();
+      context.fillText(`${Math.round(elevation)} ft`, 2, posY + 3);
+    }
+    const gradient = context.createLinearGradient(0, padding.top, 0, height - padding.bottom);
+    gradient.addColorStop(0, 'rgba(189,205,114,.38)');
+    gradient.addColorStop(1, 'rgba(189,205,114,.02)');
+    context.beginPath();
+    samples.forEach((sample, index) => {
+      const pointX = x(sample.distance);
+      const pointY = y(sample.elevation);
+      if (index === 0) context.moveTo(pointX, pointY);
+      else context.lineTo(pointX, pointY);
+    });
+    context.lineTo(x(samples[samples.length - 1].distance), height - padding.bottom);
+    context.lineTo(x(0), height - padding.bottom);
+    context.closePath();
+    context.fillStyle = gradient;
+    context.fill();
+    context.beginPath();
+    samples.forEach((sample, index) => {
+      if (index === 0) context.moveTo(x(sample.distance), y(sample.elevation));
+      else context.lineTo(x(sample.distance), y(sample.elevation));
+    });
+    context.strokeStyle = '#52623e';
+    context.lineWidth = 2;
+    context.stroke();
+    context.fillStyle = '#52623e';
+    context.textAlign = 'left';
+    context.fillText('0 mi', padding.left, height - 8);
+    context.textAlign = 'right';
+    context.fillText(`${(samples[samples.length - 1].distance / 1609.344).toFixed(1)} mi`, width - padding.right, height - 8);
+  }
+  map.on('click', event => {
+    if (!isDrawingProfile) return;
+    if (profilePoints.length >= 20) {
+      profileHint.textContent = 'Line point limit reached. Finish the profile or clear it to start again.';
+      return;
+    }
+    profilePoints.push(event.latlng);
+    drawProfileLine();
+    profileHint.textContent = `${profilePoints.length} point${profilePoints.length === 1 ? '' : 's'} added. Continue drawing or choose “Finish line”.`;
+  });
+  map.on('dblclick', () => {
+    if (isDrawingProfile) finishProfile();
+  });
+  profileStartButton.addEventListener('click', startProfile);
+  profileFinishButton.addEventListener('click', finishProfile);
+  profileClearButton.addEventListener('click', () => {
+    profileRequestId += 1;
+    isDrawingProfile = false;
+    map.doubleClickZoom.enable();
+    profilePoints = [];
+    profileLayer.clearLayers();
+    profilePanel.hidden = true;
+    profileSummary.textContent = 'Draw at least two points to sample the terrain.';
+    profileHint.textContent = 'Draw a line on the map to see its elevation.';
+    profileStartButton.disabled = false;
+    profileStartButton.textContent = '＋ Draw elevation profile';
+    profileFinishButton.disabled = true;
+    profileClearButton.disabled = true;
   });
 
   const markerIcon = L.divIcon({ className: 'place-pin-shell', html: '<span class="place-pin"></span>', iconSize: [18, 18], iconAnchor: [9, 9] });

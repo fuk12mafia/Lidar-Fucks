@@ -1,5 +1,6 @@
 const endpoint = 'https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage';
 const sampleEndpoint = 'https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/getSamples';
+const watershedEndpoint = 'https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer/6/query';
 const stateBounds = [[32.0, -83.5], [35.35, -78.3]];
 const places = [
   { name: 'Greenville', region: 'Upstate', lat: 34.8526, lon: -82.3940, note: 'At the foot of the Blue Ridge foothills.' },
@@ -45,6 +46,11 @@ const probePanel = document.querySelector('#probe-panel');
 const probeResult = document.querySelector('#probe-result');
 const probeMeta = document.querySelector('#probe-meta');
 const probeCopyButton = document.querySelector('#probe-copy');
+const watershedToggle = document.querySelector('#watershed-toggle');
+const watershedPanel = document.querySelector('#watershed-panel');
+const watershedResult = document.querySelector('#watershed-result');
+const watershedMeta = document.querySelector('#watershed-meta');
+const watershedClearButton = document.querySelector('#watershed-clear');
 const swipeToggle = document.querySelector('#swipe-toggle');
 const imageryDateLabel = document.querySelector('#imagery-date-label');
 const imageryDate = document.querySelector('#imagery-date');
@@ -131,7 +137,9 @@ if (typeof L === 'undefined') {
     layer.on('tileload', () => {
       if (!map.hasLayer(layer)) return;
       loadedTerrain = true;
-      statusElement.textContent = `USGS 3DEP ${name.toLowerCase()} active`;
+      if (!isProbingElevation && !isFindingWatershed) {
+        statusElement.textContent = `USGS 3DEP ${name.toLowerCase()} active`;
+      }
     });
     layer.on('tileerror', () => {
       if (map.hasLayer(layer) && !loadedTerrain) statusElement.textContent = 'USGS terrain tiles are temporarily unavailable. The street map is still usable.';
@@ -160,6 +168,8 @@ if (typeof L === 'undefined') {
   const comparePane = map.createPane('comparePane');
   comparePane.style.zIndex = '415';
   comparePane.style.pointerEvents = 'none';
+  const watershedPane = map.createPane('watershedPane');
+  watershedPane.style.zIndex = '425';
   const waybackReleases = new Map([
     ['43291', '2026-10-29'],
     ['16453', '2024-12-12'],
@@ -270,10 +280,14 @@ if (typeof L === 'undefined') {
   const profileLayer = L.featureGroup().addTo(map);
   let isDrawingProfile = false;
   let isProbingElevation = false;
+  let isFindingWatershed = false;
   let probeRequestId = 0;
+  let watershedRequestId = 0;
   let lastProbeCoordinates;
   let stateRing;
   let probeMarker;
+  let watershedLayer;
+  let watershedShape;
   let profilePoints = [];
   let profileRequestId = 0;
   let profileSamples = [];
@@ -454,6 +468,112 @@ if (typeof L === 'undefined') {
       probeCopyButton.disabled = false;
     }
   }
+  async function findWatershedAt(latlng) {
+    const requestId = ++watershedRequestId;
+    const latitude = latlng.lat;
+    const longitude = latlng.lng;
+    if (watershedShape) map.removeLayer(watershedShape);
+    if (watershedLayer) map.removeLayer(watershedLayer);
+    watershedShape = undefined;
+    watershedLayer = undefined;
+    if (!isInsideSouthCarolina(latitude, longitude)) {
+      watershedResult.textContent = 'That point is outside South Carolina. Click the land inside the state outline.';
+      watershedMeta.textContent = '';
+      return;
+    }
+    watershedResult.textContent = 'Tracing the upstream drainage area…';
+    watershedMeta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W`;
+    const params = new URLSearchParams({
+      geometry: JSON.stringify({
+        x: longitude,
+        y: latitude,
+        spatialReference: { wkid: 4326 }
+      }),
+      geometryType: 'esriGeometryPoint',
+      inSR: '4326',
+      spatialRel: 'esriSpatialRelIntersects',
+      outFields: 'huc12,name,areasqkm,tohuc,states',
+      returnGeometry: 'true',
+      outSR: '4326',
+      maxAllowableOffset: '0.0005',
+      f: 'json'
+    });
+    try {
+      const response = await fetch(`${watershedEndpoint}?${params.toString()}`);
+      if (!response.ok) throw new Error(`Watershed request failed (${response.status})`);
+      const result = await response.json();
+      if (requestId !== watershedRequestId) return;
+      if (result.error) throw new Error(result.error.message || 'The USGS watershed service returned an error.');
+      const feature = (result.features || [])
+        .filter(item => item.geometry && item.attributes && item.attributes.huc12)
+        .sort((first, second) => Number(first.attributes.areasqkm) - Number(second.attributes.areasqkm))[0];
+      if (!feature) throw new Error('No HUC 12 watershed boundary was found at this point.');
+      if (watershedShape) map.removeLayer(watershedShape);
+      watershedShape = L.geoJSON({
+        type: 'Feature',
+        properties: feature.attributes,
+        geometry: {
+          type: 'MultiPolygon',
+          coordinates: feature.geometry.rings.map(ring => [ring.map(([x, y]) => [x, y])])
+        }
+      }, {
+        pane: 'watershedPane',
+        style: { color: '#bdcd72', weight: 3, opacity: 1, fillColor: '#bdcd72', fillOpacity: 0.22 }
+      }).addTo(map);
+      const attrs = feature.attributes;
+      const areaSquareMiles = Number(attrs.areasqkm) * 0.386102;
+      watershedResult.textContent = attrs.name || 'Unnamed subwatershed';
+      watershedMeta.textContent = `HUC 12 · ${attrs.huc12} · ${areaSquareMiles.toLocaleString(undefined, { maximumFractionDigits: 1 })} sq mi · downstream HUC ${attrs.tohuc || 'not listed'}`;
+      watershedLayer = L.circleMarker([latitude, longitude], {
+        radius: 5, color: '#18231c', weight: 2, fillColor: '#f0efe8', fillOpacity: 1
+      }).addTo(map);
+      watershedShape.bindPopup(`<strong>${attrs.name || 'Unnamed subwatershed'}</strong><br><span>HUC 12 · ${attrs.huc12}</span>`);
+      if (map.getZoom() < 9) map.flyTo([latitude, longitude], 9, { duration: 0.8 });
+      statusElement.textContent = 'USGS HUC 12 watershed boundary shown';
+    } catch (error) {
+      if (requestId !== watershedRequestId) return;
+      console.error('Unable to find USGS watershed boundary:', error);
+      watershedResult.textContent = error.message || 'Unable to load the watershed boundary.';
+      watershedMeta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W`;
+    }
+  }
+  function clearWatershed() {
+    watershedRequestId += 1;
+    if (watershedShape) map.removeLayer(watershedShape);
+    if (watershedLayer) map.removeLayer(watershedLayer);
+    watershedShape = undefined;
+    watershedLayer = undefined;
+    watershedResult.textContent = 'Turn on the finder, then click a point inside South Carolina.';
+    watershedMeta.textContent = '';
+    watershedPanel.hidden = !isFindingWatershed;
+  }
+  watershedToggle.addEventListener('click', () => {
+    const enabled = watershedToggle.getAttribute('aria-pressed') !== 'true';
+    isFindingWatershed = enabled;
+    if (!enabled) watershedRequestId += 1;
+    watershedToggle.setAttribute('aria-pressed', String(enabled));
+    watershedToggle.textContent = enabled ? '× Stop watershed finder' : '⌁ Watershed finder';
+    isProbingElevation = false;
+    probeToggle.setAttribute('aria-pressed', 'false');
+    probeToggle.textContent = '⌖ Probe elevation';
+    probePanel.hidden = true;
+    isDrawingProfile = false;
+    map.doubleClickZoom.enable();
+    profileStartButton.disabled = enabled;
+    profileStartButton.textContent = '＋ Draw elevation profile';
+    profileFinishButton.disabled = true;
+    probeToggle.disabled = enabled || !stateRing;
+    watershedPanel.hidden = !enabled && !watershedShape;
+    if (enabled) {
+      watershedPanel.hidden = false;
+      watershedResult.textContent = 'Click inside South Carolina to trace its HUC 12 drainage area.';
+      watershedMeta.textContent = '';
+      profileHint.textContent = 'Click a place inside South Carolina to trace its watershed boundary.';
+    } else {
+      profileHint.textContent = 'Draw a line on the map to see its elevation.';
+    }
+  });
+  watershedClearButton.addEventListener('click', clearWatershed);
   probeToggle.addEventListener('click', () => {
     isProbingElevation = !isProbingElevation;
     if (isProbingElevation && isDrawingProfile) {
@@ -463,6 +583,10 @@ if (typeof L === 'undefined') {
     }
     probeToggle.setAttribute('aria-pressed', String(isProbingElevation));
     probeToggle.textContent = isProbingElevation ? '× Stop elevation probe' : '⌖ Probe elevation';
+    watershedToggle.setAttribute('aria-pressed', 'false');
+    watershedToggle.textContent = '⌁ Watershed finder';
+    isFindingWatershed = false;
+    watershedToggle.disabled = isProbingElevation;
     profileStartButton.disabled = isProbingElevation;
     profileFinishButton.disabled = isProbingElevation || !isDrawingProfile;
     profileHint.textContent = isProbingElevation
@@ -619,6 +743,10 @@ if (typeof L === 'undefined') {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
   map.on('click', event => {
+    if (isFindingWatershed) {
+      findWatershedAt(event.latlng);
+      return;
+    }
     if (isProbingElevation) {
       sampleElevationAt(event.latlng);
       return;
@@ -789,6 +917,7 @@ if (typeof L === 'undefined') {
       if (!stateFeature) throw new Error('South Carolina boundary is missing from the boundary data');
       stateRing = stateFeature.geometry.coordinates[0].map(([longitude, latitude]) => [latitude, longitude]);
       probeToggle.disabled = false;
+      watershedToggle.disabled = false;
       const maskPane = map.createPane('stateMaskPane');
       maskPane.style.zIndex = '420';
       const worldRing = [[-85, -180], [-85, 180], [85, 180], [85, -180], [-85, -180]];

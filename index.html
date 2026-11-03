@@ -71,6 +71,7 @@
           <button class="map-tool-button" id="profile-start" type="button">＋ Draw elevation profile</button>
           <button class="map-tool-button secondary" id="profile-finish" type="button" disabled>Finish line</button>
           <button class="map-tool-button secondary" id="profile-clear" type="button" disabled>Clear</button>
+          <button class="map-tool-button" id="quest-start" type="button">✦ Terrain quest</button>
         </div>
         <p class="tool-hint" id="profile-hint" aria-live="polite">Draw a line on the map to see its elevation.</p>
         <div class="swipe-controls">
@@ -97,6 +98,20 @@
           <label id="swipe-range-label" for="swipe-range" hidden>Swipe position <input id="swipe-range" type="range" min="5" max="95" value="50"><span id="swipe-value">50%</span></label>
         </div>
       </div>
+      <section class="quest-panel" id="quest-panel" aria-labelledby="quest-title" hidden>
+        <div class="quest-heading">
+          <div><p class="eyebrow dark-eyebrow">PALMETTO TERRAIN QUEST</p><h3 id="quest-title">Read the shape of the land</h3></div>
+          <p class="quest-progress" id="quest-progress"></p>
+        </div>
+        <p class="quest-clue" id="quest-clue"></p>
+        <div class="quest-actions">
+          <button class="map-tool-button secondary" id="quest-focus" type="button">Scout this landscape</button>
+          <div class="quest-answers" id="quest-answers" role="group" aria-label="Choose the landform"></div>
+          <button class="map-tool-button" id="quest-check" type="button" disabled>Check answer</button>
+        </div>
+        <p class="quest-feedback" id="quest-feedback" aria-live="polite"></p>
+        <button class="map-tool-button secondary" id="quest-next" type="button" hidden>Next field stop →</button>
+      </section>
       <div class="profile-panel" id="profile-panel" hidden>
         <div class="profile-chart-wrap"><canvas id="profile-chart" role="img" aria-label="Elevation profile graph"></canvas></div>
         <div class="profile-footer"><p id="profile-summary" aria-live="polite">Draw at least two points to sample the terrain.</p><span>HORIZONTAL · MILES &nbsp; / &nbsp; ELEVATION · FEET</span></div>

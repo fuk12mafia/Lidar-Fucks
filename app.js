@@ -29,6 +29,15 @@ const profileHint = document.querySelector('#profile-hint');
 const profilePanel = document.querySelector('#profile-panel');
 const profileCanvas = document.querySelector('#profile-chart');
 const profileSummary = document.querySelector('#profile-summary');
+const questStartButton = document.querySelector('#quest-start');
+const questPanel = document.querySelector('#quest-panel');
+const questProgress = document.querySelector('#quest-progress');
+const questClue = document.querySelector('#quest-clue');
+const questFocusButton = document.querySelector('#quest-focus');
+const questAnswers = document.querySelector('#quest-answers');
+const questCheckButton = document.querySelector('#quest-check');
+const questFeedback = document.querySelector('#quest-feedback');
+const questNextButton = document.querySelector('#quest-next');
 const swipeToggle = document.querySelector('#swipe-toggle');
 const imageryDateLabel = document.querySelector('#imagery-date-label');
 const imageryDate = document.querySelector('#imagery-date');
@@ -440,6 +449,102 @@ if (typeof L === 'undefined') {
     marker.on('click', () => map.setView([place.lat, place.lon], Math.max(map.getZoom(), 11)));
     marker.addTo(map);
     return marker;
+  });
+
+  const terrainQuest = [
+    {
+      place: 1,
+      clue: 'Up in the Blue Ridge, look for a narrow high crest with steep, branching valleys dropping away on both sides.',
+      question: 'Which landform pattern best fits this terrain?',
+      choices: ['A mountain ridge cut by stream valleys', 'A flat coastal floodplain', 'A tidal creek marsh'],
+      answer: 0,
+      note: 'The Blue Ridge edge has the state’s strongest relief: steep slopes and ridgelines stand out clearly in hillshade.'
+    },
+    {
+      place: 4,
+      clue: 'In the Midlands, the ground opens into a broad, low, nearly level basin, crossed by a wandering river and traces of older channels.',
+      question: 'What landscape is the terrain revealing?',
+      choices: ['A barrier island dune field', 'A river floodplain', 'A mountain gap'],
+      answer: 1,
+      note: 'Congaree’s floodplain is shaped by periodic river flooding. Subtle abandoned channels and natural levees can appear in detailed elevation data.'
+    },
+    {
+      place: 7,
+      clue: 'On the coast, many thin, branching channels lace through an exceptionally flat landscape before reaching open water.',
+      question: 'What carved this branching pattern?',
+      choices: ['Tidal creeks crossing a salt marsh', 'A glacial meltwater fan', 'A steep mountain stream network'],
+      answer: 0,
+      note: 'The Santee Delta’s tidal creek network drains and floods the surrounding marsh; the fine texture contrasts with the flatter marsh surfaces.'
+    },
+    {
+      place: 9,
+      clue: 'In the Lowcountry, three named rivers wind through one vast coastal basin toward the sea.',
+      question: 'Which rivers give this basin its name?',
+      choices: ['Broad, Saluda, and Catawba', 'Ashepoo, Combahee, and Edisto', 'Congaree, Wateree, and Pee Dee'],
+      answer: 1,
+      note: 'ACE stands for Ashepoo, Combahee, and Edisto. Their connected tidal river basin is a defining Lowcountry landscape.'
+    }
+  ];
+  let questIndex = 0;
+  let questScore = 0;
+  let selectedQuestAnswer = -1;
+  function renderQuest() {
+    const stop = terrainQuest[questIndex];
+    const place = places[stop.place];
+    selectedQuestAnswer = -1;
+    questProgress.textContent = `FIELD STOP ${questIndex + 1} / ${terrainQuest.length} · ${questScore} FOUND`;
+    questClue.textContent = stop.clue;
+    questFocusButton.textContent = `Scout near ${place.name} ↗`;
+    questAnswers.innerHTML = `<p class="quest-question">${stop.question}</p>${stop.choices.map((choice, index) => `
+      <button class="quest-choice" type="button" data-choice="${index}" aria-pressed="false">${choice}</button>`).join('')}`;
+    questAnswers.querySelectorAll('.quest-choice').forEach(button => button.addEventListener('click', () => {
+      if (!questNextButton.hidden) return;
+      selectedQuestAnswer = Number(button.dataset.choice);
+      questAnswers.querySelectorAll('.quest-choice').forEach(choice => {
+        choice.setAttribute('aria-pressed', String(choice === button));
+      });
+      questCheckButton.disabled = false;
+    }));
+    questCheckButton.disabled = true;
+    questCheckButton.hidden = false;
+    questNextButton.hidden = true;
+    questFeedback.textContent = '';
+  }
+  questStartButton.addEventListener('click', () => {
+    questIndex = 0;
+    questScore = 0;
+    questPanel.hidden = false;
+    questStartButton.textContent = '↻ Restart terrain quest';
+    renderQuest();
+    questPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+  questFocusButton.addEventListener('click', () => {
+    const placeIndex = terrainQuest[questIndex].place;
+    const place = places[placeIndex];
+    map.flyTo([place.lat, place.lon], 12, { duration: 0.8 });
+    markers[placeIndex].openPopup();
+  });
+  questCheckButton.addEventListener('click', () => {
+    if (selectedQuestAnswer < 0) return;
+    const stop = terrainQuest[questIndex];
+    const correct = selectedQuestAnswer === stop.answer;
+    if (correct) questScore += 1;
+    questProgress.textContent = `FIELD STOP ${questIndex + 1} / ${terrainQuest.length} · ${questScore} FOUND`;
+    questFeedback.textContent = `${correct ? 'You read it right.' : `Not quite — the answer is “${stop.choices[stop.answer]}.”`} ${stop.note}`;
+    questCheckButton.hidden = true;
+    questNextButton.hidden = false;
+    questNextButton.textContent = questIndex === terrainQuest.length - 1
+      ? `Finish quest · ${questScore}/${terrainQuest.length} found`
+      : 'Next field stop →';
+  });
+  questNextButton.addEventListener('click', () => {
+    if (questIndex === terrainQuest.length - 1) {
+      questPanel.hidden = true;
+      questStartButton.textContent = `✦ Quest complete · ${questScore}/${terrainQuest.length}`;
+      return;
+    }
+    questIndex += 1;
+    renderQuest();
   });
 
   function renderPlaces() {

@@ -3,6 +3,7 @@ const sampleEndpoint = 'https://elevation.nationalmap.gov/arcgis/rest/services/3
 const watershedEndpoint = 'https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer/6/query';
 const waterDataEndpoint = 'https://api.waterdata.usgs.gov/ogcapi/v1/collections/continuous/items';
 const monitoringLocationsEndpoint = 'https://api.waterdata.usgs.gov/ogcapi/v1/collections/monitoring-locations/items';
+const countyQueryEndpoint = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/State_County/MapServer/55/query';
 const stateBounds = [[32.0, -83.5], [35.35, -78.3]];
 const places = [
   { name: 'Greenville', region: 'Upstate', lat: 34.8526, lon: -82.3940, note: 'At the foot of the Blue Ridge foothills.' },
@@ -58,6 +59,11 @@ const riverPanel = document.querySelector('#river-panel');
 const riverResult = document.querySelector('#river-result');
 const riverReadings = document.querySelector('#river-readings');
 const riverClearButton = document.querySelector('#river-clear');
+const countyToggle = document.querySelector('#county-toggle');
+const countyPanel = document.querySelector('#county-panel');
+const countyResult = document.querySelector('#county-result');
+const countyMeta = document.querySelector('#county-meta');
+const countyClearButton = document.querySelector('#county-clear');
 const swipeToggle = document.querySelector('#swipe-toggle');
 const imageryDateLabel = document.querySelector('#imagery-date-label');
 const imageryDate = document.querySelector('#imagery-date');
@@ -179,6 +185,8 @@ if (typeof L === 'undefined') {
   watershedPane.style.zIndex = '425';
   const riverPane = map.createPane('riverPane');
   riverPane.style.zIndex = '435';
+  const countyPane = map.createPane('countyPane');
+  countyPane.style.zIndex = '440';
   const waybackReleases = new Map([
     ['43291', '2026-10-29'],
     ['16453', '2024-12-12'],
@@ -292,13 +300,17 @@ if (typeof L === 'undefined') {
   let isProbingElevation = false;
   let isFindingWatershed = false;
   let isFindingRivers = false;
+  let isFindingCounty = false;
   let probeRequestId = 0;
   let watershedRequestId = 0;
   let riverRequestId = 0;
+  let countyRequestId = 0;
   let lastProbeCoordinates;
   let stateRing;
   let probeMarker;
   let watershedLayer;
+  let countyShape;
+  let countyMarker;
   let watershedShape;
   let profilePoints = [];
   let profileRequestId = 0;
@@ -699,6 +711,83 @@ if (typeof L === 'undefined') {
     riverResult.textContent = 'Turn on River pulse, then click a point inside South Carolina.';
     riverPanel.hidden = !isFindingRivers;
   }
+  function clearCounty() {
+    countyRequestId += 1;
+    if (countyShape) map.removeLayer(countyShape);
+    if (countyMarker) map.removeLayer(countyMarker);
+    countyShape = undefined;
+    countyMarker = undefined;
+    countyResult.textContent = 'Turn on County Explorer, then click a point inside South Carolina.';
+    countyMeta.textContent = '';
+    countyPanel.hidden = !isFindingCounty;
+  }
+  async function findCountyAt(latlng) {
+    const requestId = ++countyRequestId;
+    if (countyShape) map.removeLayer(countyShape);
+    if (countyMarker) map.removeLayer(countyMarker);
+    countyShape = undefined;
+    countyMarker = undefined;
+    const latitude = latlng.lat;
+    const longitude = latlng.lng;
+    if (!isInsideSouthCarolina(latitude, longitude)) {
+      countyResult.textContent = 'That point is outside South Carolina. Click the land inside the state outline.';
+      countyMeta.textContent = '';
+      return;
+    }
+    countyResult.textContent = 'Looking up the 2020 Census county…';
+    countyMeta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W`;
+    const params = new URLSearchParams({
+      geometry: JSON.stringify({
+        x: longitude,
+        y: latitude,
+        spatialReference: { wkid: 4326 }
+      }),
+      geometryType: 'esriGeometryPoint',
+      inSR: '4326',
+      spatialRel: 'esriSpatialRelIntersects',
+      outFields: 'NAME,GEOID,POP100,AREALAND',
+      returnGeometry: 'true',
+      outSR: '4326',
+      maxAllowableOffset: '0.005',
+      f: 'geojson'
+    });
+    try {
+      const response = await fetch(`${countyQueryEndpoint}?${params.toString()}`);
+      if (!response.ok) throw new Error(`Census county request failed (${response.status})`);
+      const result = await response.json();
+      if (requestId !== countyRequestId) return;
+      if (result.error) throw new Error(result.error.message || 'The Census county service returned an error.');
+      const feature = (result.features || []).find(item =>
+        item.geometry && item.properties && item.properties.GEOID
+      );
+      if (!feature) throw new Error('No Census county boundary was found at this point.');
+      countyShape = L.geoJSON(feature, {
+        pane: 'countyPane',
+        style: { color: '#f0a36f', weight: 3, opacity: 1, fillColor: '#f0a36f', fillOpacity: 0.2 },
+        interactive: false
+      }).addTo(map);
+      countyMarker = L.circleMarker([latitude, longitude], {
+        radius: 5, color: '#18231c', weight: 2, fillColor: '#f0efe8', fillOpacity: 1
+      }).addTo(map);
+      const attrs = feature.properties;
+      const population = Number(attrs.POP100);
+      const landAreaSquareMiles = Number(attrs.AREALAND) / 2589988.110336;
+      const populationDensity = population / landAreaSquareMiles;
+      countyResult.textContent = attrs.NAME || 'Unnamed county';
+      countyMeta.textContent = [
+        `2020 population · ${Number.isFinite(population) ? population.toLocaleString() : 'not reported'}`,
+        `land area · ${Number.isFinite(landAreaSquareMiles) ? landAreaSquareMiles.toLocaleString(undefined, { maximumFractionDigits: 1 }) : 'not reported'} sq mi`,
+        `density · ${Number.isFinite(populationDensity) ? Math.round(populationDensity).toLocaleString() : 'not reported'} people/sq mi`,
+        `GEOID ${attrs.GEOID}`
+      ].join(' · ');
+      statusElement.textContent = `${attrs.NAME || 'Census county'} boundary shown`;
+    } catch (error) {
+      if (requestId !== countyRequestId) return;
+      console.error('Unable to find Census county:', error);
+      countyResult.textContent = error.message || 'Unable to load the Census county boundary.';
+      countyMeta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W`;
+    }
+  }
   function clearWatershed() {
     watershedRequestId += 1;
     if (watershedShape) map.removeLayer(watershedShape);
@@ -714,6 +803,11 @@ if (typeof L === 'undefined') {
     isFindingWatershed = enabled;
     if (!enabled) watershedRequestId += 1;
     probeRequestId += 1;
+    isFindingCounty = false;
+    countyToggle.setAttribute('aria-pressed', 'false');
+    countyToggle.textContent = '▧ County Explorer';
+    countyToggle.disabled = enabled;
+    clearCounty();
     isFindingRivers = false;
     riverToggle.setAttribute('aria-pressed', 'false');
     riverToggle.textContent = '〰 River pulse';
@@ -747,6 +841,11 @@ if (typeof L === 'undefined') {
     const enabled = riverToggle.getAttribute('aria-pressed') !== 'true';
     isFindingRivers = enabled;
     probeRequestId += 1;
+    isFindingCounty = false;
+    countyToggle.setAttribute('aria-pressed', 'false');
+    countyToggle.textContent = '▧ County Explorer';
+    countyToggle.disabled = enabled;
+    clearCounty();
     riverToggle.setAttribute('aria-pressed', String(enabled));
     riverToggle.textContent = enabled ? '× Stop River pulse' : '〰 River pulse';
     riverPanel.hidden = !enabled;
@@ -776,9 +875,57 @@ if (typeof L === 'undefined') {
     }
   });
   riverClearButton.addEventListener('click', clearRiverPulse);
+  countyToggle.addEventListener('click', () => {
+    const enabled = countyToggle.getAttribute('aria-pressed') !== 'true';
+    isFindingCounty = enabled;
+    isProbingElevation = false;
+    probeRequestId += 1;
+    probeToggle.setAttribute('aria-pressed', 'false');
+    probeToggle.textContent = '⌖ Probe elevation';
+    probeToggle.disabled = enabled;
+    probePanel.hidden = true;
+    isFindingWatershed = false;
+    watershedRequestId += 1;
+    watershedToggle.setAttribute('aria-pressed', 'false');
+    watershedToggle.textContent = '⌁ Watershed finder';
+    watershedToggle.disabled = enabled;
+    clearWatershed();
+    isFindingRivers = false;
+    riverToggle.setAttribute('aria-pressed', 'false');
+    riverToggle.textContent = '〰 River pulse';
+    riverToggle.disabled = enabled;
+    clearRiverPulse();
+    isDrawingProfile = false;
+    map.doubleClickZoom.enable();
+    profileStartButton.disabled = enabled;
+    profileStartButton.textContent = '＋ Draw elevation profile';
+    profileFinishButton.disabled = true;
+    countyToggle.setAttribute('aria-pressed', String(enabled));
+    countyToggle.textContent = enabled ? '× Stop County Explorer' : '▧ County Explorer';
+    if (enabled) {
+      clearCounty();
+      countyPanel.hidden = false;
+      countyResult.textContent = 'Click anywhere inside South Carolina to identify its county.';
+      countyMeta.textContent = '';
+      profileHint.textContent = 'Click a place inside South Carolina to explore its Census county.';
+    } else {
+      probeToggle.disabled = !stateRing;
+      watershedToggle.disabled = !stateRing;
+      riverToggle.disabled = !stateRing;
+      profileHint.textContent = 'Draw a line on the map to see its elevation.';
+    }
+    countyPanel.hidden = !enabled && !countyShape;
+  });
+  countyClearButton.addEventListener('click', clearCounty);
   probeToggle.addEventListener('click', () => {
     isProbingElevation = !isProbingElevation;
     watershedRequestId += 1;
+    isFindingCounty = false;
+    countyRequestId += 1;
+    countyToggle.setAttribute('aria-pressed', 'false');
+    countyToggle.textContent = '▧ County Explorer';
+    countyToggle.disabled = isProbingElevation;
+    countyPanel.hidden = true;
     if (isProbingElevation && isDrawingProfile) {
       isDrawingProfile = false;
       map.doubleClickZoom.enable();
@@ -952,6 +1099,10 @@ if (typeof L === 'undefined') {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
   map.on('click', event => {
+    if (isFindingCounty) {
+      findCountyAt(event.latlng);
+      return;
+    }
     if (isFindingRivers) {
       findRiversAt(event.latlng);
       return;
@@ -1132,6 +1283,7 @@ if (typeof L === 'undefined') {
       probeToggle.disabled = false;
       watershedToggle.disabled = false;
       riverToggle.disabled = false;
+      countyToggle.disabled = false;
       const maskPane = map.createPane('stateMaskPane');
       maskPane.style.zIndex = '420';
       const worldRing = [[-85, -180], [-85, 180], [85, 180], [85, -180], [-85, -180]];

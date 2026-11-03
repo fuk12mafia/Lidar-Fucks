@@ -75,6 +75,7 @@
           <button class="map-tool-button" id="probe-toggle" type="button" aria-pressed="false" disabled>⌖ Probe elevation</button>
           <button class="map-tool-button" id="watershed-toggle" type="button" aria-pressed="false" disabled>⌁ Watershed finder</button>
           <button class="map-tool-button" id="river-toggle" type="button" aria-pressed="false" disabled>〰 River pulse</button>
+          <button class="map-tool-button" id="county-toggle" type="button" aria-pressed="false" disabled>▧ County Explorer</button>
         </div>
         <p class="tool-hint" id="profile-hint" aria-live="polite">Draw a line on the map to see its elevation.</p>
         <div class="swipe-controls">
@@ -140,6 +141,15 @@
         <div class="river-readings" id="river-readings"></div>
         <p class="river-caveat">Readings are the latest available within the past 24 hours; values may be provisional and are not flood warnings or safety guidance.</p>
       </section>
+      <section class="county-panel" id="county-panel" aria-labelledby="county-title" hidden>
+        <div class="county-heading">
+          <div><p class="eyebrow dark-eyebrow">U.S. CENSUS · DECENNIAL SNAPSHOT</p><h3 id="county-title">County Explorer</h3></div>
+          <button class="map-tool-button secondary" id="county-clear" type="button">Clear county</button>
+        </div>
+        <p class="county-result" id="county-result" aria-live="polite">Turn on County Explorer, then click a point inside South Carolina.</p>
+        <p class="county-meta" id="county-meta"></p>
+        <p class="county-caveat">Population is from the 2020 Census—not a current estimate. Land area excludes water; density is calculated from that land area.</p>
+      </section>
       <div class="profile-panel" id="profile-panel" hidden>
         <div class="profile-chart-wrap"><canvas id="profile-chart" role="img" aria-label="Elevation profile graph"></canvas></div>
         <div class="profile-footer">
@@ -156,7 +166,7 @@
         <div class="map-wrap"><div id="state-map" role="application" aria-label="Interactive map of South Carolina with USGS elevation hillshade"></div><div class="map-status" id="map-status" role="status" aria-live="polite">Loading South Carolina terrain…</div><div class="map-caption" id="map-caption">USGS 3DEP BARE-EARTH HILLSHADE</div><div class="swipe-divider" id="swipe-divider" hidden><span>← AERIAL</span><i></i><span>TERRAIN →</span></div></div>
         <aside class="place-panel" aria-labelledby="places-title"><div class="place-panel-head"><p class="eyebrow dark-eyebrow">JUMP TO A PLACE</p><h3 id="places-title">Start exploring</h3></div><label class="place-search"><span aria-hidden="true">⌕</span><span class="visually-hidden">Find a South Carolina place</span><input id="place-search" type="search" placeholder="City, park, or coast" autocomplete="off"></label><div class="place-list" id="place-list" aria-live="polite"></div><p class="place-panel-note">These are starting points, not limits. Drag and zoom the map to explore the rest of the state.</p></aside>
       </div>
-      <p class="source-note"><span>DATA NOTE</span> The statewide layer is the USGS 3D Elevation Program (3DEP) bare-earth elevation service. It combines source datasets at different resolutions; a location’s data is not necessarily LiDAR. View collection date, resolution, and confirmed LiDAR coverage in the <a href="https://apps.nationalmap.gov/lidar-explorer/" target="_blank" rel="noreferrer">USGS LiDAR Explorer ↗</a>. Watershed boundaries come from the <a href="https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer" target="_blank" rel="noreferrer">USGS Watershed Boundary Dataset ↗</a> and are for mapping and analysis, not site-specific regulatory use. River Pulse uses recent observations from the <a href="https://api.waterdata.usgs.gov/ogcapi/v1/collections/continuous" target="_blank" rel="noreferrer">USGS Water Data APIs ↗</a>; readings can be provisional and are not flood warnings. The optional imagery comparison includes historical releases from <a href="https://livingatlas.arcgis.com/wayback/" target="_blank" rel="noreferrer">Esri World Imagery Wayback ↗</a>. A Wayback date identifies the archive release, not necessarily the date the image was captured; acquisition dates and coverage vary by location. Basemap © OpenStreetMap contributors. State outline generalized from U.S. Census TIGERweb.</p>
+      <p class="source-note"><span>DATA NOTE</span> The statewide layer is the USGS 3D Elevation Program (3DEP) bare-earth elevation service. It combines source datasets at different resolutions; a location’s data is not necessarily LiDAR. View collection date, resolution, and confirmed LiDAR coverage in the <a href="https://apps.nationalmap.gov/lidar-explorer/" target="_blank" rel="noreferrer">USGS LiDAR Explorer ↗</a>. County boundaries and 2020 population come from <a href="https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/State_County/MapServer" target="_blank" rel="noreferrer">U.S. Census TIGERweb ↗</a>; population is a decennial snapshot, not a current estimate. Watershed boundaries come from the <a href="https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer" target="_blank" rel="noreferrer">USGS Watershed Boundary Dataset ↗</a> and are for mapping and analysis, not site-specific regulatory use. River Pulse uses recent observations from the <a href="https://api.waterdata.usgs.gov/ogcapi/v1/collections/continuous" target="_blank" rel="noreferrer">USGS Water Data APIs ↗</a>; readings can be provisional and are not flood warnings. The optional imagery comparison includes historical releases from <a href="https://livingatlas.arcgis.com/wayback/" target="_blank" rel="noreferrer">Esri World Imagery Wayback ↗</a>. A Wayback date identifies the archive release, not necessarily the date the image was captured; acquisition dates and coverage vary by location. Basemap © OpenStreetMap contributors. State outline generalized from U.S. Census TIGERweb.</p>
     </section>
 
     <section class="method" id="about">

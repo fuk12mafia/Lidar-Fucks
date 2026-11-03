@@ -1,10 +1,10 @@
-﻿# LiDAR Atlas
+# South Carolina LiDAR Atlas
 
-A responsive, static editorial atlas for exploring the shape of the land. It uses live hillshade images rendered from the USGS 3D Elevation Program (3DEP) ImageServer and links visitors to the USGS LiDAR Explorer.
+A responsive, statewide terrain atlas for South Carolina. The interactive map is centered and bounded around the Palmetto State, with live USGS 3DEP bare-earth hillshade tiles, a generalized state outline, searchable places, and zoomable coverage across the state.
 
 ## Run locally
 
-Open `index.html` in a browser, or serve this directory with any static file server, for example:
+Open `index.html` in a browser using a local static web server (the state boundary is loaded as a local GeoJSON file, so a `file://` URL may block it). For example:
 
 ```sh
 python -m http.server 8000
@@ -12,8 +12,11 @@ python -m http.server 8000
 
 Then visit `http://localhost:8000`.
 
-## Imagery and data notes
+## Data sources and imagery
 
-Imagery is requested directly from the [USGS 3DEP dynamic image service](https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer), using its `Hillshade Gray` raster function. This is a multi-resolution, multi-source bare-earth elevation service. Coverage and source vary by location; the interface does not claim each featured view is LiDAR-derived. Consult the [USGS LiDAR Explorer](https://apps.nationalmap.gov/lidar-explorer/) for dataset coverage, source, and acquisition details. Images require an internet connection and are subject to USGS service availability.
+- Terrain tiles are dynamically rendered from the [USGS 3DEP ImageServer](https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer), using the `Hillshade Gray` raster function. This is a multi-resolution, multi-source bare-earth elevation service; not every location is necessarily LiDAR-derived. Consult the [USGS LiDAR Explorer](https://apps.nationalmap.gov/lidar-explorer/) for project coverage, survey source, and acquisition details.
+- The simplified South Carolina state outline is from [U.S. Census TIGERweb](https://tigerweb.geo.census.gov/).
+- The street basemap is © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright).
+- Map controls use [Leaflet](https://leafletjs.com/).
 
-No local image assets or build dependencies are required.
+Images and map tiles load from their public source services at runtime and require an internet connection. No paid or paywalled imagery is copied or bundled.

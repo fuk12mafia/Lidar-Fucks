@@ -1,67 +1,165 @@
-const places = [
-  { id: 'delta', number: '01', name: 'Mississippi Delta', region: 'Louisiana · USA', category: 'coast', coords: '29.95° N, 90.08° W', bbox: [-91.5, 29.8, -90.5, 30.5], summary: 'Waterways braid across a low, shifting landscape at the edge of the Gulf.', detail: 'A broad view across southeast Louisiana, where the river delta meets the Gulf Coast. Low relief and water define this landscape. The image is a USGS 3DEP hillshade render; check the explorer for local source and acquisition details.', color: 'MOSS / 01' },
-  { id: 'olympic', number: '02', name: 'Olympic Peninsula', region: 'Washington · USA', category: 'mountain', coords: '47.80° N, 123.60° W', bbox: [-124.0, 47.4, -123.2, 48.2], summary: 'Dense folds and river valleys gather beneath the Olympic range.', detail: 'The Olympic Peninsula is a meeting of steep relief, deep forest, and the Pacific. Shaded elevation makes the drainage patterns and folds in the terrain easier to read.', color: 'FERN / 02' },
-  { id: 'everglades', number: '03', name: 'Everglades Edge', region: 'Florida · USA', category: 'coast', coords: '25.85° N, 80.75° W', bbox: [-81.2, 25.55, -80.3, 26.15], summary: 'A subtle topography where wetlands, coast, and open water blur together.', detail: 'South Florida is famously low and nearly level. Bare-earth elevation models can reveal small changes in slope that shape how water moves across the Everglades and toward the coast.', color: 'SILT / 03' },
-  { id: 'appalachia', number: '04', name: 'Appalachian Ridges', region: 'West Virginia · USA', category: 'mountain', coords: '38.30° N, 80.00° W', bbox: [-80.5, 37.9, -79.5, 38.7], summary: 'A long rhythm of parallel ridgelines, hollows, and branching creeks.', detail: 'The folded ridges of the central Appalachians make a compelling study in drainage and slope. This hillshade emphasizes the repeating grain of the land.', color: 'SLATE / 04' },
-  { id: 'sanfrancisco', number: '05', name: 'San Francisco Bay', region: 'California · USA', category: 'heritage', coords: '37.77° N, 122.42° W', bbox: [-122.8, 37.55, -122.1, 38.05], summary: 'A meeting of hills, shoreline, and a city built into the contours.', detail: 'The Bay Area combines steep coastal hills with a densely engineered shoreline. Bare-earth models can help distinguish natural relief from the places where the ground has been reshaped.', color: 'BASALT / 05' },
-  { id: 'redrock', number: '06', name: 'Red Rock Country', region: 'Utah · USA', category: 'heritage', coords: '37.20° N, 112.98° W', bbox: [-113.4, 36.9, -112.55, 37.5], summary: 'Canyons and plateaus carve a dramatic cross-section through the Colorado Plateau.', detail: 'Southern Utah’s deeply incised terrain shows how water cuts through layered rock. This regional view is useful for exploring relief; it is not a geological interpretation or a claim about a specific LiDAR survey.', color: 'OCHRE / 06' }
-];
 const endpoint = 'https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage';
-function imageUrl(bbox, width = 1100, height = 700) {
-  const params = new URLSearchParams({
-    bbox: bbox.join(','), bboxSR: '4326', size: `${width},${height}`, imageSR: '4326',
-    format: 'jpgpng', f: 'image', renderingRule: JSON.stringify({ rasterFunction: 'Hillshade Gray' })
+const stateBounds = [[32.0, -83.5], [35.35, -78.3]];
+const places = [
+  { name: 'Greenville', region: 'Upstate', lat: 34.8526, lon: -82.3940, note: 'At the foot of the Blue Ridge foothills.' },
+  { name: 'Table Rock State Park', region: 'Blue Ridge', lat: 35.0243, lon: -82.7040, note: 'Ridges, streams, and steep mountain terrain.' },
+  { name: 'Jocassee Gorges', region: 'Blue Ridge', lat: 35.0657, lon: -82.8877, note: 'A rugged landscape of forests, rivers, and coves.' },
+  { name: 'Columbia', region: 'Midlands', lat: 34.0007, lon: -81.0348, note: 'The capital city near the center of the state.' },
+  { name: 'Congaree National Park', region: 'Midlands', lat: 33.7948, lon: -80.7821, note: 'Floodplain forest shaped by the Congaree and Wateree rivers.' },
+  { name: 'Sumter National Forest', region: 'Piedmont', lat: 34.3715, lon: -82.0630, note: 'Forested ridges and reservoirs across the western Piedmont.' },
+  { name: 'Myrtle Beach', region: 'Grand Strand', lat: 33.6891, lon: -78.8867, note: 'The Atlantic shoreline and its coastal plain.' },
+  { name: 'Santee Delta', region: 'Lowcountry', lat: 33.1800, lon: -79.3500, note: 'A broad network of tidal channels and marshes.' },
+  { name: 'Charleston', region: 'Lowcountry', lat: 32.7765, lon: -79.9311, note: 'Harbor, barrier islands, and a low-lying coastal plain.' },
+  { name: 'ACE Basin', region: 'Lowcountry', lat: 32.6000, lon: -80.4500, note: 'The Ashepoo, Combahee, and Edisto rivers meet tidal wetlands.' },
+  { name: 'Beaufort', region: 'Sea Islands', lat: 32.4316, lon: -80.6698, note: 'Sea islands, estuaries, and the southern coast.' },
+  { name: 'Edisto Island', region: 'Sea Islands', lat: 32.5580, lon: -80.2850, note: 'Barrier island shoreline and coastal lowlands.' }
+];
+const mapElement = document.querySelector('#state-map');
+const statusElement = document.querySelector('#map-status');
+const searchElement = document.querySelector('#place-search');
+const listElement = document.querySelector('#place-list');
+const opacityInput = document.querySelector('#terrain-opacity');
+const opacityValue = document.querySelector('#opacity-value');
+
+if (typeof L === 'undefined') {
+  statusElement.textContent = 'The map library did not load. Check your connection and reload the page.';
+} else {
+  const map = L.map(mapElement, {
+    minZoom: 6,
+    maxZoom: 17,
+    maxBounds: stateBounds,
+    maxBoundsViscosity: 0.85,
+    zoomControl: false,
+    scrollWheelZoom: true
   });
-  return `${endpoint}?${params.toString()}`;
-}
-const grid = document.querySelector('#card-grid');
-const search = document.querySelector('#search');
-const empty = document.querySelector('#empty-state');
-const count = document.querySelector('#result-count');
-const filters = [...document.querySelectorAll('.filter')];
-const dialog = document.querySelector('#detail-dialog');
-let activeFilter = 'all';
-function render() {
-  const query = search.value.trim().toLowerCase();
-  const filtered = places.filter(place => (activeFilter === 'all' || place.category === activeFilter) && `${place.name} ${place.region} ${place.summary}`.toLowerCase().includes(query));
-  grid.innerHTML = filtered.map(place => `
-    <article class="place-card" tabindex="0" role="button" aria-label="View ${place.name} details" data-id="${place.id}">
-      <div class="card-art"><img src="${imageUrl(place.bbox)}" alt="USGS 3DEP shaded elevation view near ${place.name}" loading="lazy"><span class="card-number">FIELD NOTE ${place.number}</span><span class="image-credit">${place.color} · USGS 3DEP</span><span class="card-open" aria-hidden="true">↗</span></div>
-      <div class="card-meta"><div><p class="card-region">${place.region}</p><h3 class="card-title">${place.name}</h3></div><span class="card-coordinate">${place.coords}</span></div>
-      <p class="card-summary">${place.summary}</p>
-    </article>`).join('');
-  count.textContent = String(filtered.length).padStart(2, '0');
-  empty.hidden = filtered.length !== 0;
-  grid.querySelectorAll('.place-card').forEach(card => {
-    const open = () => showPlace(places.find(place => place.id === card.dataset.id));
-    card.addEventListener('click', open);
-    card.addEventListener('keydown', event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); open(); } });
+  map.fitBounds([[32.02, -83.36], [35.22, -78.54]], { padding: [14, 14] });
+  L.control.zoom({ position: 'topright' }).addTo(map);
+  L.control.scale({ imperial: false, position: 'bottomright' }).addTo(map);
+
+  const streetLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }).addTo(map);
+
+  const halfWorld = 20037508.342789244;
+  const terrainPane = map.createPane('terrainPane');
+  terrainPane.style.zIndex = '410';
+  terrainPane.style.pointerEvents = 'none';
+  const terrainLayer = L.tileLayer('', {
+    pane: 'terrainPane',
+    minZoom: 6,
+    maxZoom: 17,
+    tileSize: 256,
+    opacity: Number(opacityInput.value) / 100,
+    updateWhenIdle: true,
+    keepBuffer: 2,
+    crossOrigin: true,
+    attribution: '<a href="https://www.usgs.gov/3d-elevation-program">USGS 3DEP elevation</a>'
   });
+  terrainLayer.getTileUrl = function (coords) {
+    const tilesAtZoom = Math.pow(2, coords.z);
+    const span = (2 * halfWorld) / tilesAtZoom;
+    const xmin = -halfWorld + coords.x * span;
+    const ymax = halfWorld - coords.y * span;
+    const bbox = [xmin, ymax - span, xmin + span, ymax].map(value => value.toFixed(2)).join(',');
+    const params = new URLSearchParams({
+      bbox,
+      bboxSR: '3857',
+      size: '256,256',
+      imageSR: '3857',
+      format: 'jpgpng',
+      f: 'image',
+      renderingRule: JSON.stringify({ rasterFunction: 'Hillshade Gray' })
+    });
+    return `${endpoint}?${params.toString()}`;
+  };
+  terrainLayer.addTo(map);
+  let loadedTerrain = false;
+  terrainLayer.on('tileload', () => {
+    loadedTerrain = true;
+    statusElement.textContent = 'USGS 3DEP terrain layer active';
+  });
+  let failedTiles = 0;
+  terrainLayer.on('tileerror', () => {
+    failedTiles += 1;
+    if (!loadedTerrain && failedTiles >= 4) {
+      statusElement.textContent = 'USGS terrain tiles are temporarily unavailable. The street map is still usable.';
+    }
+  });
+  map.on('baselayerchange', event => { if (event.layer === streetLayer) map.invalidateSize(); });
+
+  opacityInput.addEventListener('input', () => {
+    const opacity = Number(opacityInput.value) / 100;
+    terrainLayer.setOpacity(opacity);
+    opacityValue.textContent = `${opacityInput.value}%`;
+  });
+
+  const markerIcon = L.divIcon({ className: 'place-pin-shell', html: '<span class="place-pin"></span>', iconSize: [18, 18], iconAnchor: [9, 9] });
+  const markers = places.map(place => {
+    const marker = L.marker([place.lat, place.lon], { icon: markerIcon, title: `${place.name}, ${place.region}` });
+    marker.bindPopup(`<strong>${place.name}</strong><br><span>${place.region} · ${place.note}</span>`, { maxWidth: 250 });
+    marker.on('click', () => map.setView([place.lat, place.lon], Math.max(map.getZoom(), 11)));
+    marker.addTo(map);
+    return marker;
+  });
+
+  function renderPlaces() {
+    const query = searchElement.value.trim().toLowerCase();
+    const matches = places.map((place, index) => ({ place, index }))
+      .filter(({ place }) => `${place.name} ${place.region} ${place.note}`.toLowerCase().includes(query));
+    listElement.innerHTML = matches.map(({ place, index }) => `
+      <button class="place-link" type="button" data-index="${index}">
+        <span class="place-link-copy"><strong>${place.name}</strong><span>${place.region}</span></span>
+        <span class="place-arrow" aria-hidden="true">↗</span>
+      </button>`).join('') || '<p class="place-empty">No places found. Try another search.</p>';
+    listElement.querySelectorAll('.place-link').forEach(button => button.addEventListener('click', () => {
+      const place = places[Number(button.dataset.index)];
+      map.flyTo([place.lat, place.lon], 12, { duration: 0.7 });
+      markers[Number(button.dataset.index)].openPopup();
+    }));
+  }
+  searchElement.addEventListener('input', renderPlaces);
+  renderPlaces();
+
+  fetch('data/south-carolina.geojson')
+    .then(response => {
+      if (!response.ok) throw new Error(`Boundary request failed (${response.status})`);
+      return response.json();
+    })
+    .then(geojson => {
+      const stateFeature = geojson.features.find(feature => feature.properties && feature.properties.GEOID === '45');
+      if (!stateFeature) throw new Error('South Carolina boundary is missing from the boundary data');
+      const stateRing = stateFeature.geometry.coordinates[0].map(([longitude, latitude]) => [latitude, longitude]);
+      const maskPane = map.createPane('stateMaskPane');
+      maskPane.style.zIndex = '420';
+      const worldRing = [[-85, -180], [-85, 180], [85, 180], [85, -180], [-85, -180]];
+      L.polygon([worldRing, stateRing], {
+        pane: 'stateMaskPane',
+        stroke: false,
+        fillColor: '#101510',
+        fillOpacity: 0.58,
+        fillRule: 'evenodd',
+        interactive: false
+      }).addTo(map);
+      const outlinePane = map.createPane('stateOutlinePane');
+      outlinePane.style.zIndex = '430';
+      L.geoJSON(geojson, {
+        pane: 'stateOutlinePane',
+        interactive: false,
+        style: { color: '#bdcd72', weight: 2, opacity: 0.95, fillOpacity: 0 }
+      }).addTo(map);
+    })
+    .catch(error => {
+      console.error('Unable to load the South Carolina boundary:', error);
+      statusElement.textContent = 'State outline could not load; pan and zoom within the highlighted map bounds.';
+    });
 }
-function showPlace(place) {
-  if (!place) return;
-  document.querySelector('#dialog-region').textContent = `${place.region} · FIELD NOTE ${place.number}`;
-  document.querySelector('#dialog-title').textContent = place.name;
-  document.querySelector('#dialog-description').textContent = place.detail;
-  document.querySelector('#dialog-coords').textContent = place.coords;
-  document.querySelector('#dialog-image').src = imageUrl(place.bbox, 1300, 900);
-  document.querySelector('#dialog-image').alt = `USGS 3DEP hillshade near ${place.name}`;
-  const source = document.querySelector('#dialog-source');
-  source.href = `https://apps.nationalmap.gov/lidar-explorer/`;
-  dialog.showModal();
-}
-filters.forEach(button => button.addEventListener('click', () => {
-  activeFilter = button.dataset.filter;
-  filters.forEach(item => { const selected = item === button; item.classList.toggle('active', selected); item.setAttribute('aria-pressed', String(selected)); });
-  render();
-}));
-search.addEventListener('input', render);
-document.querySelector('#dialog-close').addEventListener('click', () => dialog.close());
-dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
-document.addEventListener('keydown', event => {
-  if (event.key === '/' && !['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) { event.preventDefault(); search.focus(); }
-  if (event.key === 'Escape' && dialog.open) dialog.close();
-});
-document.querySelector('#hero-image').src = imageUrl([-113.4, 36.9, -112.55, 37.5], 1800, 1100);
-document.querySelector('#method-image').src = imageUrl([-80.5, 37.9, -79.5, 38.7], 1100, 800);
-render();
+
+document.querySelector('#hero-image').src = `${endpoint}?${new URLSearchParams({
+  bbox: '-82.95,34.9,-82.55,35.18', bboxSR: '4326', size: '1800,1100', imageSR: '4326',
+  format: 'jpgpng', f: 'image', renderingRule: JSON.stringify({ rasterFunction: 'Hillshade Gray' })
+})}`;
+document.querySelector('#method-image').src = `${endpoint}?${new URLSearchParams({
+  bbox: '-80.95,33.55,-80.6,33.9', bboxSR: '4326', size: '1100,800', imageSR: '4326',
+  format: 'jpgpng', f: 'image', renderingRule: JSON.stringify({ rasterFunction: 'Hillshade Gray' })
+})}`;

@@ -40,6 +40,11 @@ const questAnswers = document.querySelector('#quest-answers');
 const questCheckButton = document.querySelector('#quest-check');
 const questFeedback = document.querySelector('#quest-feedback');
 const questNextButton = document.querySelector('#quest-next');
+const probeToggle = document.querySelector('#probe-toggle');
+const probePanel = document.querySelector('#probe-panel');
+const probeResult = document.querySelector('#probe-result');
+const probeMeta = document.querySelector('#probe-meta');
+const probeCopyButton = document.querySelector('#probe-copy');
 const swipeToggle = document.querySelector('#swipe-toggle');
 const imageryDateLabel = document.querySelector('#imagery-date-label');
 const imageryDate = document.querySelector('#imagery-date');
@@ -264,6 +269,11 @@ if (typeof L === 'undefined') {
 
   const profileLayer = L.featureGroup().addTo(map);
   let isDrawingProfile = false;
+  let isProbingElevation = false;
+  let probeRequestId = 0;
+  let lastProbeCoordinates;
+  let stateRing;
+  let probeMarker;
   let profilePoints = [];
   let profileRequestId = 0;
   let profileSamples = [];
@@ -376,6 +386,107 @@ if (typeof L === 'undefined') {
       Math.cos(radians(first.lat)) * Math.cos(radians(second.lat)) * Math.sin(dLon / 2) ** 2;
     return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   }
+  function isInsideSouthCarolina(lat, lon) {
+    if (!stateRing) return false;
+    let inside = false;
+    for (let current = 0, previous = stateRing.length - 1; current < stateRing.length; previous = current++) {
+      const [currentLat, currentLon] = stateRing[current];
+      const [previousLat, previousLon] = stateRing[previous];
+      const crossesLatitude = (currentLat > lat) !== (previousLat > lat);
+      if (crossesLatitude && lon < (previousLon - currentLon) * (lat - currentLat) / (previousLat - currentLat) + currentLon) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+  async function sampleElevationAt(latlng) {
+    const requestId = ++probeRequestId;
+    const latitude = latlng.lat;
+    const longitude = latlng.lng;
+    if (!isInsideSouthCarolina(latitude, longitude)) {
+      probeResult.textContent = 'That point is outside the South Carolina boundary. Tap the land inside the outline.';
+      probeMeta.textContent = '';
+      probeCopyButton.disabled = true;
+      return;
+    }
+    lastProbeCoordinates = { latitude, longitude };
+    probeResult.textContent = 'Sampling USGS 3DEP elevation…';
+    probeMeta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W`;
+    probeCopyButton.disabled = true;
+    const geometry = JSON.stringify({
+      x: longitude,
+      y: latitude,
+      spatialReference: { wkid: 4326 }
+    });
+    const params = new URLSearchParams({
+      geometry,
+      geometryType: 'esriGeometryPoint',
+      sampleCount: '1',
+      interpolation: 'RSP_BilinearInterpolation',
+      outSR: '4326',
+      returnFirstValueOnly: 'true',
+      f: 'json'
+    });
+    try {
+      const response = await fetch(`${sampleEndpoint}?${params.toString()}`);
+      if (!response.ok) throw new Error(`Elevation request failed (${response.status})`);
+      const result = await response.json();
+      if (requestId !== probeRequestId) return;
+      const sample = (result.samples || []).find(item => Number.isFinite(Number(item.value)));
+      if (!sample) throw new Error('No elevation sample is available at this point.');
+      const elevationFeet = Number(sample.value) * 3.28084;
+      const nearest = places
+        .map(place => ({ place, distance: distanceBetween({ lat: latitude, lon: longitude }, place) }))
+        .sort((first, second) => first.distance - second.distance)[0];
+      probeResult.textContent = `${Math.round(elevationFeet).toLocaleString()} ft elevation`;
+      probeMeta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W · about ${(nearest.distance / 1609.344).toFixed(1)} mi from ${nearest.place.name}`;
+      probeCopyButton.disabled = false;
+      if (probeMarker) map.removeLayer(probeMarker);
+      probeMarker = L.circleMarker([latitude, longitude], {
+        radius: 7, color: '#18231c', weight: 2, fillColor: '#bdcd72', fillOpacity: 1
+      }).bindPopup(`<strong>${Math.round(elevationFeet).toLocaleString()} ft elevation</strong><br><span>USGS 3DEP</span>`).addTo(map);
+      statusElement.textContent = 'USGS 3DEP point elevation sampled';
+    } catch (error) {
+      if (requestId !== probeRequestId) return;
+      console.error('Unable to sample map-point elevation:', error);
+      probeResult.textContent = error.message || 'Unable to sample elevation at this point.';
+      probeMeta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W`;
+      probeCopyButton.disabled = false;
+    }
+  }
+  probeToggle.addEventListener('click', () => {
+    isProbingElevation = !isProbingElevation;
+    if (isProbingElevation && isDrawingProfile) {
+      isDrawingProfile = false;
+      map.doubleClickZoom.enable();
+      profileStartButton.textContent = '＋ Draw elevation profile';
+    }
+    probeToggle.setAttribute('aria-pressed', String(isProbingElevation));
+    probeToggle.textContent = isProbingElevation ? '× Stop elevation probe' : '⌖ Probe elevation';
+    profileStartButton.disabled = isProbingElevation;
+    profileFinishButton.disabled = isProbingElevation || !isDrawingProfile;
+    profileHint.textContent = isProbingElevation
+      ? 'Tap a point inside South Carolina to sample its ground elevation.'
+      : 'Draw a line on the map to see its elevation.';
+    probePanel.hidden = !isProbingElevation && !lastProbeCoordinates;
+    if (isProbingElevation) {
+      probePanel.hidden = false;
+      probeResult.textContent = 'Tap a point inside South Carolina to sample its elevation.';
+      probeMeta.textContent = '';
+    }
+  });
+  probeCopyButton.addEventListener('click', async () => {
+    if (!lastProbeCoordinates) return;
+    const { latitude, longitude } = lastProbeCoordinates;
+    try {
+      await navigator.clipboard.writeText(`${latitude.toFixed(6)}, ${longitude.toFixed(6)}`);
+      probeMeta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W · coordinates copied`;
+    } catch (error) {
+      console.error('Unable to copy probe coordinates:', error);
+      probeMeta.textContent = 'Copy failed. Select coordinates: ' +
+        `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+    }
+  });
   function drawElevationChart(samples) {
     const context = profileCanvas.getContext('2d');
     const bounds = profileCanvas.getBoundingClientRect();
@@ -508,6 +619,10 @@ if (typeof L === 'undefined') {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
   map.on('click', event => {
+    if (isProbingElevation) {
+      sampleElevationAt(event.latlng);
+      return;
+    }
     if (!isDrawingProfile) return;
     if (profilePoints.length >= 20) {
       profileHint.textContent = 'Line point limit reached. Finish the profile or clear it to start again.';
@@ -672,7 +787,8 @@ if (typeof L === 'undefined') {
     .then(geojson => {
       const stateFeature = geojson.features.find(feature => feature.properties && feature.properties.GEOID === '45');
       if (!stateFeature) throw new Error('South Carolina boundary is missing from the boundary data');
-      const stateRing = stateFeature.geometry.coordinates[0].map(([longitude, latitude]) => [latitude, longitude]);
+      stateRing = stateFeature.geometry.coordinates[0].map(([longitude, latitude]) => [latitude, longitude]);
+      probeToggle.disabled = false;
       const maskPane = map.createPane('stateMaskPane');
       maskPane.style.zIndex = '420';
       const worldRing = [[-85, -180], [-85, 180], [85, 180], [85, -180], [-85, -180]];

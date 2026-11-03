@@ -72,6 +72,7 @@
           <button class="map-tool-button secondary" id="profile-finish" type="button" disabled>Finish line</button>
           <button class="map-tool-button secondary" id="profile-clear" type="button" disabled>Clear</button>
           <button class="map-tool-button" id="quest-start" type="button">✦ Terrain quest</button>
+          <button class="map-tool-button" id="probe-toggle" type="button" aria-pressed="false" disabled>⌖ Probe elevation</button>
         </div>
         <p class="tool-hint" id="profile-hint" aria-live="polite">Draw a line on the map to see its elevation.</p>
         <div class="swipe-controls">
@@ -111,6 +112,14 @@
         </div>
         <p class="quest-feedback" id="quest-feedback" aria-live="polite"></p>
         <button class="map-tool-button secondary" id="quest-next" type="button" hidden>Next field stop →</button>
+      </section>
+      <section class="probe-panel" id="probe-panel" aria-labelledby="probe-title" hidden>
+        <div class="probe-heading">
+          <div><p class="eyebrow dark-eyebrow">GROUND-LEVEL READOUT · USGS 3DEP</p><h3 id="probe-title">Elevation probe</h3></div>
+          <button class="map-tool-button secondary" id="probe-copy" type="button" disabled>Copy coordinates</button>
+        </div>
+        <p class="probe-result" id="probe-result" aria-live="polite">Turn on the probe, then tap a point inside South Carolina.</p>
+        <p class="probe-meta" id="probe-meta"></p>
       </section>
       <div class="profile-panel" id="profile-panel" hidden>
         <div class="profile-chart-wrap"><canvas id="profile-chart" role="img" aria-label="Elevation profile graph"></canvas></div>

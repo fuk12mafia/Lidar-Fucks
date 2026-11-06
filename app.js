@@ -1,5 +1,6 @@
 const endpoint = 'https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage';
 const sampleEndpoint = 'https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/getSamples';
+const terrainDnaGridSize = 7;
 const watershedEndpoint = 'https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer/6/query';
 const waterDataEndpoint = 'https://api.waterdata.usgs.gov/ogcapi/v1/collections/continuous/items';
 const monitoringLocationsEndpoint = 'https://api.waterdata.usgs.gov/ogcapi/v1/collections/monitoring-locations/items';
@@ -71,6 +72,13 @@ const floodResult = document.querySelector('#flood-result');
 const floodAlerts = document.querySelector('#flood-alerts');
 const floodUpdated = document.querySelector('#flood-updated');
 const floodRefreshButton = document.querySelector('#flood-refresh');
+const terrainDnaToggle = document.querySelector('#terrain-dna-toggle');
+const terrainDnaPanel = document.querySelector('#terrain-dna-panel');
+const terrainDnaResult = document.querySelector('#terrain-dna-result');
+const terrainDnaGrid = document.querySelector('#terrain-dna-grid');
+const terrainDnaMeta = document.querySelector('#terrain-dna-meta');
+const terrainDnaCopy = document.querySelector('#terrain-dna-copy');
+const terrainDnaClear = document.querySelector('#terrain-dna-clear');
 const swipeToggle = document.querySelector('#swipe-toggle');
 const imageryDateLabel = document.querySelector('#imagery-date-label');
 const imageryDate = document.querySelector('#imagery-date');
@@ -196,6 +204,8 @@ if (typeof L === 'undefined') {
   countyPane.style.zIndex = '440';
   const floodPane = map.createPane('floodPane');
   floodPane.style.zIndex = '445';
+  const terrainDnaPane = map.createPane('terrainDnaPane');
+  terrainDnaPane.style.zIndex = '450';
   const waybackReleases = new Map([
     ['43291', '2026-10-29'],
     ['16453', '2024-12-12'],
@@ -311,11 +321,13 @@ if (typeof L === 'undefined') {
   let isFindingRivers = false;
   let isFindingCounty = false;
   let isFindingFloodAlerts = false;
+  let isFindingTerrainDna = false;
   let probeRequestId = 0;
   let watershedRequestId = 0;
   let riverRequestId = 0;
   let countyRequestId = 0;
   let floodRequestId = 0;
+  let terrainDnaRequestId = 0;
   let lastProbeCoordinates;
   let stateRing;
   let probeMarker;
@@ -323,6 +335,8 @@ if (typeof L === 'undefined') {
   let countyShape;
   let countyMarker;
   let floodAlertLayer;
+  let terrainDnaMarker;
+  let lastTerrainDna;
   let watershedShape;
   let profilePoints = [];
   let profileRequestId = 0;
@@ -891,6 +905,163 @@ if (typeof L === 'undefined') {
       floodUpdated.textContent = '';
     }
   }
+  function clearTerrainDna() {
+    terrainDnaRequestId += 1;
+    if (terrainDnaMarker) map.removeLayer(terrainDnaMarker);
+    terrainDnaMarker = undefined;
+    lastTerrainDna = undefined;
+    terrainDnaGrid.replaceChildren();
+    terrainDnaMeta.textContent = '';
+    terrainDnaCopy.disabled = true;
+    terrainDnaResult.textContent = 'Turn on Terrain DNA, then click a point inside South Carolina.';
+    terrainDnaPanel.hidden = !isFindingTerrainDna;
+  }
+  function terrainDnaColor(value, minimum, maximum) {
+    const stops = [
+      [31, 57, 43],
+      [111, 137, 82],
+      [198, 190, 113],
+      [227, 147, 91]
+    ];
+    const position = maximum === minimum ? 0 : (value - minimum) / (maximum - minimum);
+    const scaled = Math.max(0, Math.min(stops.length - 1, position * (stops.length - 1)));
+    const index = Math.floor(scaled);
+    const blend = scaled - index;
+    const first = stops[index];
+    const second = stops[Math.min(index + 1, stops.length - 1)];
+    const rgb = first.map((channel, channelIndex) =>
+      Math.round(channel + (second[channelIndex] - channel) * blend)
+    );
+    return `rgb(${rgb.join(',')})`;
+  }
+  async function createTerrainDnaAt(latlng) {
+    const requestId = ++terrainDnaRequestId;
+    if (terrainDnaMarker) map.removeLayer(terrainDnaMarker);
+    terrainDnaMarker = undefined;
+    terrainDnaGrid.replaceChildren();
+    terrainDnaCopy.disabled = true;
+    const latitude = latlng.lat;
+    const longitude = latlng.lng;
+    if (!isInsideSouthCarolina(latitude, longitude)) {
+      terrainDnaResult.textContent = 'That point is outside South Carolina. Click the land inside the state outline.';
+      terrainDnaMeta.textContent = '';
+      return;
+    }
+    terrainDnaResult.textContent = 'Sampling a 1.5 km terrain neighborhood…';
+    terrainDnaMeta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W`;
+    const spacingDegrees = 0.00225;
+    const longitudeSpacing = spacingDegrees / Math.cos(latitude * Math.PI / 180);
+    const points = [];
+    for (let row = 0; row < terrainDnaGridSize; row += 1) {
+      for (let column = 0; column < terrainDnaGridSize; column += 1) {
+        const point = {
+          lat: latitude + (row - (terrainDnaGridSize - 1) / 2) * spacingDegrees,
+          lon: longitude + (column - (terrainDnaGridSize - 1) / 2) * longitudeSpacing
+        };
+        points.push(isInsideSouthCarolina(point.lat, point.lon) ? point : undefined);
+      }
+    }
+    const validPoints = points
+      .map((point, gridIndex) => point ? { ...point, gridIndex } : undefined)
+      .filter(Boolean);
+    if (validPoints.length < 13) {
+      terrainDnaResult.textContent = 'Not enough sample points fall inside South Carolina here. Try a point farther from the state edge.';
+      terrainDnaMeta.textContent = '';
+      return;
+    }
+    const params = new URLSearchParams({
+      geometry: JSON.stringify({
+        points: validPoints.map(point => [point.lon, point.lat]),
+        spatialReference: { wkid: 4326 }
+      }),
+      geometryType: 'esriGeometryMultipoint',
+      sampleCount: String(validPoints.length),
+      interpolation: 'RSP_BilinearInterpolation',
+      outSR: '4326',
+      returnFirstValueOnly: 'true',
+      f: 'json'
+    });
+    try {
+      const response = await fetch(`${sampleEndpoint}?${params.toString()}`);
+      if (!response.ok) throw new Error(`Terrain sample request failed (${response.status})`);
+      const result = await response.json();
+      if (requestId !== terrainDnaRequestId) return;
+      if (result.error) throw new Error(result.error.message || 'The USGS elevation service returned an error.');
+      const elevations = new Map();
+      (result.samples || []).forEach(sample => {
+        const elevation = Number(sample.value);
+        const point = validPoints[sample.locationId];
+        if (point && Number.isFinite(elevation)) elevations.set(point.gridIndex, elevation);
+      });
+      if (elevations.size < 13) throw new Error('Not enough USGS elevation samples were available for this neighborhood.');
+      const values = [...elevations.values()];
+      const minimum = Math.min(...values);
+      const maximum = Math.max(...values);
+      const reliefFeet = (maximum - minimum) * 3.28084;
+      const roughnessValues = [];
+      elevations.forEach((elevation, index) => {
+        const row = Math.floor(index / terrainDnaGridSize);
+        const column = index % terrainDnaGridSize;
+        const neighbors = [
+          column > 0 ? index - 1 : -1,
+          column < terrainDnaGridSize - 1 ? index + 1 : -1,
+          row > 0 ? index - terrainDnaGridSize : -1,
+          row < terrainDnaGridSize - 1 ? index + terrainDnaGridSize : -1
+        ];
+        neighbors.forEach(neighbor => {
+          if (elevations.has(neighbor) && neighbor > index) {
+            roughnessValues.push(Math.abs(elevation - elevations.get(neighbor)) * 3.28084);
+          }
+        });
+      });
+      const roughnessFeet = roughnessValues.reduce((sum, value) => sum + value, 0) /
+        Math.max(roughnessValues.length, 1);
+      const signature = reliefFeet < 30
+        ? 'Soft relief'
+        : reliefFeet < 100
+          ? 'Rolling ground'
+          : 'Rugged relief';
+      points.forEach((point, index) => {
+        const cell = document.createElement('span');
+        cell.className = 'terrain-dna-cell';
+        const elevation = elevations.get(index);
+        if (Number.isFinite(elevation)) {
+          cell.style.backgroundColor = terrainDnaColor(elevation, minimum, maximum);
+          cell.setAttribute('aria-label', `${(elevation * 3.28084).toFixed(0)} feet`);
+          cell.title = `${(elevation * 3.28084).toFixed(0)} ft`;
+        } else {
+          cell.classList.add('is-unsampled');
+          cell.setAttribute('aria-label', 'Outside the state or unavailable');
+        }
+        terrainDnaGrid.append(cell);
+      });
+      lastTerrainDna = {
+        latitude,
+        longitude,
+        signature,
+        reliefFeet,
+        roughnessFeet,
+        sampleCount: elevations.size
+      };
+      terrainDnaResult.textContent = signature;
+      terrainDnaMeta.textContent = `${elevations.size} USGS samples · local relief ${reliefFeet.toFixed(0)} ft · average neighbor change ${roughnessFeet.toFixed(1)} ft · approx. 1.5 km footprint`;
+      terrainDnaCopy.disabled = false;
+      terrainDnaMarker = L.circleMarker([latitude, longitude], {
+        pane: 'terrainDnaPane',
+        radius: 6,
+        color: '#18231c',
+        weight: 2,
+        fillColor: '#f0a36f',
+        fillOpacity: 1
+      }).addTo(map);
+      statusElement.textContent = 'USGS terrain fingerprint sampled';
+    } catch (error) {
+      if (requestId !== terrainDnaRequestId) return;
+      console.error('Unable to build USGS terrain fingerprint:', error);
+      terrainDnaResult.textContent = error.message || 'Unable to sample this terrain neighborhood.';
+      terrainDnaMeta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W`;
+    }
+  }
   function clearWatershed() {
     watershedRequestId += 1;
     if (watershedShape) map.removeLayer(watershedShape);
@@ -905,6 +1076,12 @@ if (typeof L === 'undefined') {
     const enabled = watershedToggle.getAttribute('aria-pressed') !== 'true';
     isFindingWatershed = enabled;
     if (!enabled) watershedRequestId += 1;
+    isFindingTerrainDna = false;
+    terrainDnaToggle.setAttribute('aria-pressed', 'false');
+    terrainDnaToggle.textContent = '✧ Terrain DNA';
+    terrainDnaToggle.disabled = enabled;
+    terrainDnaPanel.hidden = true;
+    clearTerrainDna();
     isFindingFloodAlerts = false;
     floodToggle.setAttribute('aria-pressed', 'false');
     floodToggle.textContent = '⚑ Flood Watch';
@@ -942,6 +1119,7 @@ if (typeof L === 'undefined') {
       profileHint.textContent = 'Click a place inside South Carolina to trace its watershed boundary.';
     } else {
       floodToggle.disabled = false;
+      terrainDnaToggle.disabled = false;
       profileHint.textContent = 'Draw a line on the map to see its elevation.';
     }
   });
@@ -950,6 +1128,12 @@ if (typeof L === 'undefined') {
     const enabled = riverToggle.getAttribute('aria-pressed') !== 'true';
     isFindingRivers = enabled;
     probeRequestId += 1;
+    isFindingTerrainDna = false;
+    terrainDnaToggle.setAttribute('aria-pressed', 'false');
+    terrainDnaToggle.textContent = '✧ Terrain DNA';
+    terrainDnaToggle.disabled = enabled;
+    terrainDnaPanel.hidden = true;
+    clearTerrainDna();
     isFindingFloodAlerts = false;
     floodToggle.setAttribute('aria-pressed', 'false');
     floodToggle.textContent = '⚑ Flood Watch';
@@ -986,6 +1170,7 @@ if (typeof L === 'undefined') {
       probeToggle.disabled = !stateRing;
       watershedToggle.disabled = !stateRing;
       floodToggle.disabled = !stateRing;
+      terrainDnaToggle.disabled = !stateRing;
       profileHint.textContent = 'Draw a line on the map to see its elevation.';
     }
   });
@@ -993,6 +1178,12 @@ if (typeof L === 'undefined') {
   countyToggle.addEventListener('click', () => {
     const enabled = countyToggle.getAttribute('aria-pressed') !== 'true';
     isFindingCounty = enabled;
+    isFindingTerrainDna = false;
+    terrainDnaToggle.setAttribute('aria-pressed', 'false');
+    terrainDnaToggle.textContent = '✧ Terrain DNA';
+    terrainDnaToggle.disabled = enabled;
+    terrainDnaPanel.hidden = true;
+    clearTerrainDna();
     isFindingFloodAlerts = false;
     floodToggle.setAttribute('aria-pressed', 'false');
     floodToggle.textContent = '⚑ Flood Watch';
@@ -1033,6 +1224,7 @@ if (typeof L === 'undefined') {
       watershedToggle.disabled = !stateRing;
       riverToggle.disabled = !stateRing;
       floodToggle.disabled = !stateRing;
+      terrainDnaToggle.disabled = !stateRing;
       profileHint.textContent = 'Draw a line on the map to see its elevation.';
     }
     countyPanel.hidden = !enabled && !countyShape;
@@ -1041,6 +1233,12 @@ if (typeof L === 'undefined') {
   floodToggle.addEventListener('click', () => {
     const enabled = floodToggle.getAttribute('aria-pressed') !== 'true';
     isFindingFloodAlerts = enabled;
+    isFindingTerrainDna = false;
+    terrainDnaToggle.setAttribute('aria-pressed', 'false');
+    terrainDnaToggle.textContent = '✧ Terrain DNA';
+    terrainDnaToggle.disabled = enabled;
+    terrainDnaPanel.hidden = true;
+    clearTerrainDna();
     floodToggle.setAttribute('aria-pressed', String(enabled));
     floodToggle.textContent = enabled ? '× Stop Flood Watch' : '⚑ Flood Watch';
     isProbingElevation = false;
@@ -1083,13 +1281,96 @@ if (typeof L === 'undefined') {
       watershedToggle.disabled = !stateRing;
       riverToggle.disabled = !stateRing;
       countyToggle.disabled = !stateRing;
+      terrainDnaToggle.disabled = !stateRing;
       profileHint.textContent = 'Draw a line on the map to see its elevation.';
     }
   });
   floodRefreshButton.addEventListener('click', loadFloodAlerts);
+  terrainDnaToggle.addEventListener('click', () => {
+    const enabled = terrainDnaToggle.getAttribute('aria-pressed') !== 'true';
+    isFindingTerrainDna = enabled;
+    isProbingElevation = false;
+    probeRequestId += 1;
+    probeToggle.setAttribute('aria-pressed', 'false');
+    probeToggle.textContent = '⌖ Probe elevation';
+    probePanel.hidden = true;
+    isFindingWatershed = false;
+    watershedRequestId += 1;
+    watershedToggle.setAttribute('aria-pressed', 'false');
+    watershedToggle.textContent = '⌁ Watershed finder';
+    watershedPanel.hidden = true;
+    clearWatershed();
+    isFindingRivers = false;
+    riverToggle.setAttribute('aria-pressed', 'false');
+    riverToggle.textContent = '〰 River pulse';
+    riverPanel.hidden = true;
+    clearRiverPulse();
+    isFindingCounty = false;
+    countyToggle.setAttribute('aria-pressed', 'false');
+    countyToggle.textContent = '▧ County Explorer';
+    countyPanel.hidden = true;
+    clearCounty();
+    isFindingFloodAlerts = false;
+    floodRequestId += 1;
+    floodToggle.setAttribute('aria-pressed', 'false');
+    floodToggle.textContent = '⚑ Flood Watch';
+    floodPanel.hidden = true;
+    if (floodAlertLayer) map.removeLayer(floodAlertLayer);
+    floodAlertLayer = undefined;
+    isDrawingProfile = false;
+    map.doubleClickZoom.enable();
+    profileStartButton.disabled = enabled;
+    profileStartButton.textContent = '＋ Draw elevation profile';
+    profileFinishButton.disabled = true;
+    profileClearButton.disabled = enabled || profilePoints.length === 0;
+    probeToggle.disabled = enabled;
+    watershedToggle.disabled = enabled;
+    riverToggle.disabled = enabled;
+    countyToggle.disabled = enabled;
+    floodToggle.disabled = enabled;
+    terrainDnaToggle.setAttribute('aria-pressed', String(enabled));
+    terrainDnaToggle.textContent = enabled ? '× Stop Terrain DNA' : '✧ Terrain DNA';
+    if (enabled) {
+      clearTerrainDna();
+      terrainDnaPanel.hidden = false;
+      terrainDnaResult.textContent = 'Click anywhere inside South Carolina to create a terrain fingerprint.';
+      terrainDnaMeta.textContent = '';
+      profileHint.textContent = 'Click a place inside South Carolina to sample its Terrain DNA.';
+    } else {
+      clearTerrainDna();
+      probeToggle.disabled = !stateRing;
+      watershedToggle.disabled = !stateRing;
+      riverToggle.disabled = !stateRing;
+      countyToggle.disabled = !stateRing;
+      floodToggle.disabled = !stateRing;
+      profileHint.textContent = 'Draw a line on the map to see its elevation.';
+    }
+    terrainDnaPanel.hidden = !enabled;
+  });
+  terrainDnaClear.addEventListener('click', clearTerrainDna);
+  terrainDnaCopy.addEventListener('click', async () => {
+    if (!lastTerrainDna) return;
+    const { latitude, longitude, signature, reliefFeet, roughnessFeet, sampleCount } = lastTerrainDna;
+    const text = `South Carolina Terrain DNA: ${signature}; local relief ${reliefFeet.toFixed(0)} ft; average neighbor change ${roughnessFeet.toFixed(1)} ft; ${sampleCount} USGS 3DEP samples; ${latitude.toFixed(5)}, ${longitude.toFixed(5)}. Approximate neighborhood summary, not survey-grade analysis.`;
+    try {
+      await navigator.clipboard.writeText(text);
+      terrainDnaMeta.textContent = 'Terrain fingerprint copied to clipboard.';
+    } catch (error) {
+      console.error('Unable to copy terrain fingerprint:', error);
+      terrainDnaMeta.textContent = 'Clipboard access unavailable. Copy the summary and coordinates manually.';
+    }
+  });
   probeToggle.addEventListener('click', () => {
     isProbingElevation = !isProbingElevation;
     watershedRequestId += 1;
+    isFindingTerrainDna = false;
+    terrainDnaRequestId += 1;
+    terrainDnaToggle.setAttribute('aria-pressed', 'false');
+    terrainDnaToggle.textContent = '✧ Terrain DNA';
+    terrainDnaToggle.disabled = isProbingElevation;
+    terrainDnaPanel.hidden = true;
+    if (terrainDnaMarker) map.removeLayer(terrainDnaMarker);
+    terrainDnaMarker = undefined;
     isFindingFloodAlerts = false;
     floodRequestId += 1;
     floodToggle.setAttribute('aria-pressed', 'false');
@@ -1277,6 +1558,10 @@ if (typeof L === 'undefined') {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
   map.on('click', event => {
+    if (isFindingTerrainDna) {
+      createTerrainDnaAt(event.latlng);
+      return;
+    }
     if (isFindingCounty) {
       findCountyAt(event.latlng);
       return;
@@ -1320,6 +1605,7 @@ if (typeof L === 'undefined') {
     profileListenButton.disabled = true;
     profileDownloadButton.disabled = true;
     floodToggle.disabled = !stateRing;
+    terrainDnaToggle.disabled = !stateRing;
     profileHint.textContent = 'Draw a line on the map to see its elevation.';
     profileStartButton.disabled = false;
     profileStartButton.textContent = '＋ Draw elevation profile';
@@ -1464,6 +1750,7 @@ if (typeof L === 'undefined') {
       riverToggle.disabled = false;
       countyToggle.disabled = false;
       floodToggle.disabled = false;
+      terrainDnaToggle.disabled = false;
       const maskPane = map.createPane('stateMaskPane');
       maskPane.style.zIndex = '420';
       const worldRing = [[-85, -180], [-85, 180], [85, 180], [85, -180], [-85, -180]];

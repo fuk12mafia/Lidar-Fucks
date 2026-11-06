@@ -1,6 +1,6 @@
 # South Carolina LiDAR Atlas
 
-A responsive, statewide terrain atlas for South Carolina. The interactive map is centered and bounded around the Palmetto State, with live USGS 3DEP elevation styles, a tap-to-sample elevation probe, a USGS HUC 12 watershed finder, nearby USGS streamflow and river-stage readings, a Census county explorer, active National Weather Service flood alerts, a swipeable current or historical imagery comparison with a playable archive time-lapse, a four-stop terrain-reading quest, playable sonification and CSV export for elevation profiles, a generalized state outline, and searchable places.
+A responsive, statewide terrain atlas for South Carolina. The interactive map is centered and bounded around the Palmetto State, with live USGS 3DEP elevation styles, a tap-to-sample elevation probe, neighborhood Terrain DNA fingerprints, a USGS HUC 12 watershed finder, nearby USGS streamflow and river-stage readings, a Census county explorer, active National Weather Service flood alerts, a swipeable current or historical imagery comparison with a playable archive time-lapse, a four-stop terrain-reading quest, playable sonification and CSV export for elevation profiles, a generalized state outline, and searchable places.
 
 ## Run locally
 
@@ -30,3 +30,5 @@ Elevation profiles use the USGS ImageServer `getSamples` operation and chart sam
 The profile soundscape uses browser-generated tones rather than a recording: pitch follows sampled elevation and stereo position follows progress along the route. Profile CSV downloads include cumulative distance, elevation, and sample coordinates.
 
 The elevation probe uses the USGS ImageServer `getSamples` point operation for clicks inside South Carolina, converts returned meters to feet, and reports the nearest curated atlas place. It does not claim sub-meter accuracy; resolution varies across the statewide service.
+
+Terrain DNA samples a 7 × 7 grid from the USGS 3DEP ImageServer around a clicked point, colors a compact neighborhood fingerprint, and summarizes local relief and average neighboring elevation change. The grid covers roughly 1.5 km, filters samples outside the state, and is exploratory rather than survey-grade; resolution varies across the statewide service.

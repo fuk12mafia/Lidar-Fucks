@@ -4,6 +4,7 @@ const watershedEndpoint = 'https://hydro.nationalmap.gov/arcgis/rest/services/wb
 const waterDataEndpoint = 'https://api.waterdata.usgs.gov/ogcapi/v1/collections/continuous/items';
 const monitoringLocationsEndpoint = 'https://api.waterdata.usgs.gov/ogcapi/v1/collections/monitoring-locations/items';
 const countyQueryEndpoint = 'https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/State_County/MapServer/55/query';
+const floodAlertsEndpoint = 'https://api.weather.gov/alerts/active?area=SC';
 const stateBounds = [[32.0, -83.5], [35.35, -78.3]];
 const places = [
   { name: 'Greenville', region: 'Upstate', lat: 34.8526, lon: -82.3940, note: 'At the foot of the Blue Ridge foothills.' },
@@ -64,6 +65,12 @@ const countyPanel = document.querySelector('#county-panel');
 const countyResult = document.querySelector('#county-result');
 const countyMeta = document.querySelector('#county-meta');
 const countyClearButton = document.querySelector('#county-clear');
+const floodToggle = document.querySelector('#flood-toggle');
+const floodPanel = document.querySelector('#flood-panel');
+const floodResult = document.querySelector('#flood-result');
+const floodAlerts = document.querySelector('#flood-alerts');
+const floodUpdated = document.querySelector('#flood-updated');
+const floodRefreshButton = document.querySelector('#flood-refresh');
 const swipeToggle = document.querySelector('#swipe-toggle');
 const imageryDateLabel = document.querySelector('#imagery-date-label');
 const imageryDate = document.querySelector('#imagery-date');
@@ -187,6 +194,8 @@ if (typeof L === 'undefined') {
   riverPane.style.zIndex = '435';
   const countyPane = map.createPane('countyPane');
   countyPane.style.zIndex = '440';
+  const floodPane = map.createPane('floodPane');
+  floodPane.style.zIndex = '445';
   const waybackReleases = new Map([
     ['43291', '2026-10-29'],
     ['16453', '2024-12-12'],
@@ -301,16 +310,19 @@ if (typeof L === 'undefined') {
   let isFindingWatershed = false;
   let isFindingRivers = false;
   let isFindingCounty = false;
+  let isFindingFloodAlerts = false;
   let probeRequestId = 0;
   let watershedRequestId = 0;
   let riverRequestId = 0;
   let countyRequestId = 0;
+  let floodRequestId = 0;
   let lastProbeCoordinates;
   let stateRing;
   let probeMarker;
   let watershedLayer;
   let countyShape;
   let countyMarker;
+  let floodAlertLayer;
   let watershedShape;
   let profilePoints = [];
   let profileRequestId = 0;
@@ -788,6 +800,97 @@ if (typeof L === 'undefined') {
       countyMeta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W`;
     }
   }
+  function clearFloodAlerts() {
+    floodRequestId += 1;
+    if (floodAlertLayer) map.removeLayer(floodAlertLayer);
+    floodAlertLayer = undefined;
+    floodAlerts.replaceChildren();
+    floodUpdated.textContent = '';
+    floodPanel.hidden = !isFindingFloodAlerts;
+    floodResult.textContent = 'Turn on Flood Watch, then load the current NWS flood alerts.';
+  }
+  async function loadFloodAlerts() {
+    const requestId = ++floodRequestId;
+    floodResult.textContent = 'Checking the National Weather Service alert feed…';
+    floodAlerts.replaceChildren();
+    if (floodAlertLayer) map.removeLayer(floodAlertLayer);
+    floodAlertLayer = undefined;
+    try {
+      const response = await fetch(floodAlertsEndpoint, {
+        headers: { Accept: 'application/geo+json' }
+      });
+      if (!response.ok) throw new Error(`National Weather Service alert request failed (${response.status})`);
+      const result = await response.json();
+      if (requestId !== floodRequestId) return;
+      if (!Array.isArray(result.features)) {
+        throw new Error('The National Weather Service returned an unexpected alert feed.');
+      }
+      const features = result.features.filter(feature =>
+        feature.properties && /flood/i.test(feature.properties.event || '')
+      );
+      const now = new Date();
+      floodUpdated.textContent = `US NWS feed checked ${now.toLocaleString()}`;
+      if (!features.length) {
+        floodResult.textContent = 'No active flood watches, warnings, or advisories are listed for South Carolina.';
+        statusElement.textContent = 'No active South Carolina flood alerts in the NWS feed';
+        return;
+      }
+      const floodCollection = { type: 'FeatureCollection', features };
+      floodAlertLayer = L.geoJSON(floodCollection, {
+        pane: 'floodPane',
+        interactive: false,
+        style: feature => {
+          const severity = feature.properties && feature.properties.severity;
+          const color = severity === 'Extreme' || severity === 'Severe' ? '#c64e3c' : '#e5a84e';
+          return { color, weight: 3, opacity: 0.95, fillColor: color, fillOpacity: 0.24 };
+        }
+      }).addTo(map);
+      floodResult.textContent = `${features.length} active flood alert${features.length === 1 ? '' : 's'} from the National Weather Service.`;
+      features.forEach(feature => {
+        const properties = feature.properties;
+        const card = document.createElement('article');
+        card.className = 'flood-alert-card';
+        const title = document.createElement('h4');
+        title.textContent = properties.event || 'Flood alert';
+        card.append(title);
+        if (properties.headline) {
+          const headline = document.createElement('p');
+          headline.textContent = properties.headline;
+          card.append(headline);
+        }
+        if (properties.areaDesc) {
+          const area = document.createElement('p');
+          area.textContent = properties.areaDesc;
+          card.append(area);
+        }
+        const endsAt = properties.expires || properties.ends;
+        if (endsAt) {
+          const expiry = new Date(endsAt);
+          const expiration = document.createElement('p');
+          expiration.textContent = Number.isNaN(expiry.getTime())
+            ? `Ends ${endsAt}`
+            : `Expires ${expiry.toLocaleString()}`;
+          card.append(expiration);
+        }
+        const officialUrl = properties.web;
+        if (typeof officialUrl === 'string' && /^https:\/\/(?:www|api)\.weather\.gov\//.test(officialUrl)) {
+          const link = document.createElement('a');
+          link.href = officialUrl;
+          link.target = '_blank';
+          link.rel = 'noreferrer';
+          link.textContent = 'Official NWS alert ↗';
+          card.append(link);
+        }
+        floodAlerts.append(card);
+      });
+      statusElement.textContent = `${features.length} active South Carolina flood alert${features.length === 1 ? '' : 's'} shown`;
+    } catch (error) {
+      if (requestId !== floodRequestId) return;
+      console.error('Unable to load National Weather Service flood alerts:', error);
+      floodResult.textContent = error.message || 'Unable to load National Weather Service flood alerts.';
+      floodUpdated.textContent = '';
+    }
+  }
   function clearWatershed() {
     watershedRequestId += 1;
     if (watershedShape) map.removeLayer(watershedShape);
@@ -802,6 +905,11 @@ if (typeof L === 'undefined') {
     const enabled = watershedToggle.getAttribute('aria-pressed') !== 'true';
     isFindingWatershed = enabled;
     if (!enabled) watershedRequestId += 1;
+    isFindingFloodAlerts = false;
+    floodToggle.setAttribute('aria-pressed', 'false');
+    floodToggle.textContent = '⚑ Flood Watch';
+    floodToggle.disabled = enabled;
+    clearFloodAlerts();
     probeRequestId += 1;
     isFindingCounty = false;
     countyToggle.setAttribute('aria-pressed', 'false');
@@ -833,6 +941,7 @@ if (typeof L === 'undefined') {
       watershedMeta.textContent = '';
       profileHint.textContent = 'Click a place inside South Carolina to trace its watershed boundary.';
     } else {
+      floodToggle.disabled = false;
       profileHint.textContent = 'Draw a line on the map to see its elevation.';
     }
   });
@@ -841,6 +950,11 @@ if (typeof L === 'undefined') {
     const enabled = riverToggle.getAttribute('aria-pressed') !== 'true';
     isFindingRivers = enabled;
     probeRequestId += 1;
+    isFindingFloodAlerts = false;
+    floodToggle.setAttribute('aria-pressed', 'false');
+    floodToggle.textContent = '⚑ Flood Watch';
+    floodToggle.disabled = enabled;
+    clearFloodAlerts();
     isFindingCounty = false;
     countyToggle.setAttribute('aria-pressed', 'false');
     countyToggle.textContent = '▧ County Explorer';
@@ -871,6 +985,7 @@ if (typeof L === 'undefined') {
     } else {
       probeToggle.disabled = !stateRing;
       watershedToggle.disabled = !stateRing;
+      floodToggle.disabled = !stateRing;
       profileHint.textContent = 'Draw a line on the map to see its elevation.';
     }
   });
@@ -878,6 +993,11 @@ if (typeof L === 'undefined') {
   countyToggle.addEventListener('click', () => {
     const enabled = countyToggle.getAttribute('aria-pressed') !== 'true';
     isFindingCounty = enabled;
+    isFindingFloodAlerts = false;
+    floodToggle.setAttribute('aria-pressed', 'false');
+    floodToggle.textContent = '⚑ Flood Watch';
+    floodToggle.disabled = enabled;
+    clearFloodAlerts();
     isProbingElevation = false;
     probeRequestId += 1;
     probeToggle.setAttribute('aria-pressed', 'false');
@@ -912,14 +1032,72 @@ if (typeof L === 'undefined') {
       probeToggle.disabled = !stateRing;
       watershedToggle.disabled = !stateRing;
       riverToggle.disabled = !stateRing;
+      floodToggle.disabled = !stateRing;
       profileHint.textContent = 'Draw a line on the map to see its elevation.';
     }
     countyPanel.hidden = !enabled && !countyShape;
   });
   countyClearButton.addEventListener('click', clearCounty);
+  floodToggle.addEventListener('click', () => {
+    const enabled = floodToggle.getAttribute('aria-pressed') !== 'true';
+    isFindingFloodAlerts = enabled;
+    floodToggle.setAttribute('aria-pressed', String(enabled));
+    floodToggle.textContent = enabled ? '× Stop Flood Watch' : '⚑ Flood Watch';
+    isProbingElevation = false;
+    probeRequestId += 1;
+    probeToggle.setAttribute('aria-pressed', 'false');
+    probeToggle.textContent = '⌖ Probe elevation';
+    probePanel.hidden = true;
+    isFindingWatershed = false;
+    watershedRequestId += 1;
+    watershedToggle.setAttribute('aria-pressed', 'false');
+    watershedToggle.textContent = '⌁ Watershed finder';
+    watershedPanel.hidden = true;
+    clearWatershed();
+    isFindingRivers = false;
+    riverToggle.setAttribute('aria-pressed', 'false');
+    riverToggle.textContent = '〰 River pulse';
+    riverPanel.hidden = true;
+    clearRiverPulse();
+    isFindingCounty = false;
+    countyToggle.setAttribute('aria-pressed', 'false');
+    countyToggle.textContent = '▧ County Explorer';
+    countyPanel.hidden = true;
+    clearCounty();
+    isDrawingProfile = false;
+    map.doubleClickZoom.enable();
+    profileStartButton.disabled = enabled;
+    profileStartButton.textContent = '＋ Draw elevation profile';
+    profileFinishButton.disabled = true;
+    probeToggle.disabled = enabled;
+    watershedToggle.disabled = enabled;
+    riverToggle.disabled = enabled;
+    countyToggle.disabled = enabled;
+    floodPanel.hidden = !enabled;
+    if (enabled) {
+      profileHint.textContent = 'Load official National Weather Service flood alerts for South Carolina.';
+      loadFloodAlerts();
+    } else {
+      clearFloodAlerts();
+      probeToggle.disabled = !stateRing;
+      watershedToggle.disabled = !stateRing;
+      riverToggle.disabled = !stateRing;
+      countyToggle.disabled = !stateRing;
+      profileHint.textContent = 'Draw a line on the map to see its elevation.';
+    }
+  });
+  floodRefreshButton.addEventListener('click', loadFloodAlerts);
   probeToggle.addEventListener('click', () => {
     isProbingElevation = !isProbingElevation;
     watershedRequestId += 1;
+    isFindingFloodAlerts = false;
+    floodRequestId += 1;
+    floodToggle.setAttribute('aria-pressed', 'false');
+    floodToggle.textContent = '⚑ Flood Watch';
+    floodToggle.disabled = isProbingElevation;
+    floodPanel.hidden = true;
+    if (floodAlertLayer) map.removeLayer(floodAlertLayer);
+    floodAlertLayer = undefined;
     isFindingCounty = false;
     countyRequestId += 1;
     countyToggle.setAttribute('aria-pressed', 'false');
@@ -1141,6 +1319,7 @@ if (typeof L === 'undefined') {
     profileSummary.textContent = 'Draw at least two points to sample the terrain.';
     profileListenButton.disabled = true;
     profileDownloadButton.disabled = true;
+    floodToggle.disabled = !stateRing;
     profileHint.textContent = 'Draw a line on the map to see its elevation.';
     profileStartButton.disabled = false;
     profileStartButton.textContent = '＋ Draw elevation profile';
@@ -1284,6 +1463,7 @@ if (typeof L === 'undefined') {
       watershedToggle.disabled = false;
       riverToggle.disabled = false;
       countyToggle.disabled = false;
+      floodToggle.disabled = false;
       const maskPane = map.createPane('stateMaskPane');
       maskPane.style.zIndex = '420';
       const worldRing = [[-85, -180], [-85, 180], [85, 180], [85, -180], [-85, -180]];

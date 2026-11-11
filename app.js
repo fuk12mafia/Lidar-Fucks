@@ -1,6 +1,7 @@
 const endpoint = 'https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/exportImage';
 const sampleEndpoint = 'https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer/getSamples';
 const terrainDnaGridSize = 7;
+const terrainFlyoverGridSize = 25;
 const watershedEndpoint = 'https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer/6/query';
 const waterDataEndpoint = 'https://api.waterdata.usgs.gov/ogcapi/v1/collections/continuous/items';
 const monitoringLocationsEndpoint = 'https://api.waterdata.usgs.gov/ogcapi/v1/collections/monitoring-locations/items';
@@ -79,6 +80,13 @@ const terrainDnaGrid = document.querySelector('#terrain-dna-grid');
 const terrainDnaMeta = document.querySelector('#terrain-dna-meta');
 const terrainDnaCopy = document.querySelector('#terrain-dna-copy');
 const terrainDnaClear = document.querySelector('#terrain-dna-clear');
+const terrainFlyoverToggle = document.querySelector('#terrain-flyover-toggle');
+const terrainFlyoverPanel = document.querySelector('#terrain-flyover-panel');
+const terrainFlyoverCanvas = document.querySelector('#terrain-flyover-canvas');
+const terrainFlyoverResult = document.querySelector('#terrain-flyover-result');
+const terrainFlyoverMeta = document.querySelector('#terrain-flyover-meta');
+const terrainFlyoverRotation = document.querySelector('#terrain-flyover-rotation');
+const terrainFlyoverRotationValue = document.querySelector('#terrain-flyover-rotation-value');
 const swipeToggle = document.querySelector('#swipe-toggle');
 const imageryDateLabel = document.querySelector('#imagery-date-label');
 const imageryDate = document.querySelector('#imagery-date');
@@ -206,6 +214,8 @@ if (typeof L === 'undefined') {
   floodPane.style.zIndex = '445';
   const terrainDnaPane = map.createPane('terrainDnaPane');
   terrainDnaPane.style.zIndex = '450';
+  const terrainFlyoverPane = map.createPane('terrainFlyoverPane');
+  terrainFlyoverPane.style.zIndex = '455';
   const waybackReleases = new Map([
     ['43291', '2026-10-29'],
     ['16453', '2024-12-12'],
@@ -322,12 +332,14 @@ if (typeof L === 'undefined') {
   let isFindingCounty = false;
   let isFindingFloodAlerts = false;
   let isFindingTerrainDna = false;
+  let isFindingTerrainFlyover = false;
   let probeRequestId = 0;
   let watershedRequestId = 0;
   let riverRequestId = 0;
   let countyRequestId = 0;
   let floodRequestId = 0;
   let terrainDnaRequestId = 0;
+  let terrainFlyoverRequestId = 0;
   let lastProbeCoordinates;
   let stateRing;
   let probeMarker;
@@ -337,6 +349,8 @@ if (typeof L === 'undefined') {
   let floodAlertLayer;
   let terrainDnaMarker;
   let lastTerrainDna;
+  let terrainFlyoverMarker;
+  let lastTerrainFlyover;
   let watershedShape;
   let profilePoints = [];
   let profileRequestId = 0;
@@ -383,6 +397,7 @@ if (typeof L === 'undefined') {
   async function finishProfile() {
     if (!isDrawingProfile) return;
     isDrawingProfile = false;
+    terrainFlyoverToggle.disabled = !stateRing;
     map.doubleClickZoom.enable();
     profileStartButton.disabled = false;
     profileStartButton.textContent = '＋ Draw elevation profile';
@@ -934,6 +949,237 @@ if (typeof L === 'undefined') {
     );
     return `rgb(${rgb.join(',')})`;
   }
+  function clearTerrainFlyover() {
+    terrainFlyoverRequestId += 1;
+    if (terrainFlyoverMarker) map.removeLayer(terrainFlyoverMarker);
+    terrainFlyoverMarker = undefined;
+    lastTerrainFlyover = undefined;
+    const context = terrainFlyoverCanvas.getContext('2d');
+    context.clearRect(0, 0, terrainFlyoverCanvas.width, terrainFlyoverCanvas.height);
+    terrainFlyoverCanvas.removeAttribute('width');
+    terrainFlyoverCanvas.removeAttribute('height');
+    terrainFlyoverCanvas.setAttribute('aria-label', 'Isometric 3D model of sampled South Carolina terrain');
+    terrainFlyoverResult.textContent = 'Turn on Terrain flyover, then click a point inside South Carolina.';
+    terrainFlyoverMeta.textContent = '';
+    terrainFlyoverPanel.hidden = !isFindingTerrainFlyover;
+  }
+  function shadeTerrainColor(color, brightness) {
+    const channels = color.match(/\d+/g).map(Number);
+    return `rgb(${channels.map(channel => Math.round(channel * brightness)).join(',')})`;
+  }
+  function drawTerrainFlyover() {
+    if (!lastTerrainFlyover) return;
+    const bounds = terrainFlyoverCanvas.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) return;
+    const pixelRatio = window.devicePixelRatio || 1;
+    terrainFlyoverCanvas.width = Math.round(bounds.width * pixelRatio);
+    terrainFlyoverCanvas.height = Math.round(bounds.height * pixelRatio);
+    const context = terrainFlyoverCanvas.getContext('2d');
+    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    context.clearRect(0, 0, bounds.width, bounds.height);
+    const { elevations, gridSize, minimum, maximum, cellSpacingMeters, verticalExaggeration } = lastTerrainFlyover;
+    const angle = Number(terrainFlyoverRotation.value) * Math.PI / 180;
+    const cosine = Math.cos(angle);
+    const sine = Math.sin(angle);
+    const project = (row, column, elevation) => {
+      const x = column - (gridSize - 1) / 2;
+      const y = row - (gridSize - 1) / 2;
+      const rotatedX = x * cosine - y * sine;
+      const rotatedY = x * sine + y * cosine;
+      const height = elevation === undefined
+        ? 0
+        : (elevation - minimum) / cellSpacingMeters * verticalExaggeration;
+      return {
+        x: (rotatedX - rotatedY) * 0.866,
+        y: (rotatedX + rotatedY) * 0.5 - height,
+        depth: rotatedX + rotatedY,
+        worldX: rotatedX,
+        worldY: rotatedY,
+        height
+      };
+    };
+    const vertices = [];
+    for (let row = 0; row < gridSize; row += 1) {
+      for (let column = 0; column < gridSize; column += 1) {
+        const index = row * gridSize + column;
+        const elevation = elevations[index];
+        if (elevation !== undefined) vertices.push(project(row, column, elevation));
+      }
+    }
+    if (vertices.length < 3) return;
+    const minX = Math.min(...vertices.map(vertex => vertex.x));
+    const maxX = Math.max(...vertices.map(vertex => vertex.x));
+    const minY = Math.min(...vertices.map(vertex => vertex.y));
+    const maxY = Math.max(...vertices.map(vertex => vertex.y));
+    const padding = 24;
+    const scale = Math.min(
+      (bounds.width - padding * 2) / Math.max(maxX - minX, 1),
+      (bounds.height - padding * 2) / Math.max(maxY - minY, 1)
+    );
+    const offsetX = (bounds.width - (maxX - minX) * scale) / 2 - minX * scale;
+    const offsetY = (bounds.height - (maxY - minY) * scale) / 2 - minY * scale;
+    const screen = vertex => ({ x: offsetX + vertex.x * scale, y: offsetY + vertex.y * scale });
+    const triangles = [];
+    function addTriangle(indices) {
+      const values = indices.map(index => elevations[index]);
+      if (values.some(value => value === undefined)) return;
+      const points = indices.map(index => {
+        const row = Math.floor(index / gridSize);
+        const column = index % gridSize;
+        return project(row, column, elevations[index]);
+      });
+      triangles.push({
+        points,
+        depth: points.reduce((sum, point) => sum + point.depth, 0) / points.length,
+        elevation: values.reduce((sum, value) => sum + value, 0) / values.length
+      });
+    }
+    for (let row = 0; row < gridSize - 1; row += 1) {
+      for (let column = 0; column < gridSize - 1; column += 1) {
+        const topLeft = row * gridSize + column;
+        const topRight = topLeft + 1;
+        const bottomLeft = topLeft + gridSize;
+        const bottomRight = bottomLeft + 1;
+        addTriangle([topLeft, bottomLeft, topRight]);
+        addTriangle([topRight, bottomLeft, bottomRight]);
+      }
+    }
+    triangles.sort((first, second) => first.depth - second.depth);
+    triangles.forEach(triangle => {
+      const [first, second, third] = triangle.points;
+      const edgeA = [second.worldX - first.worldX, second.worldY - first.worldY, second.height - first.height];
+      const edgeB = [third.worldX - first.worldX, third.worldY - first.worldY, third.height - first.height];
+      let normal = [
+        edgeA[1] * edgeB[2] - edgeA[2] * edgeB[1],
+        edgeA[2] * edgeB[0] - edgeA[0] * edgeB[2],
+        edgeA[0] * edgeB[1] - edgeA[1] * edgeB[0]
+      ];
+      if (normal[2] < 0) normal = normal.map(component => -component);
+      const length = Math.hypot(...normal) || 1;
+      const light = Math.max(0, (normal[0] * -0.35 + normal[1] * -0.45 + normal[2] * 0.82) / length);
+      const brightness = 0.64 + light * 0.43;
+      context.beginPath();
+      triangle.points.forEach((point, index) => {
+        const position = screen(point);
+        if (index === 0) context.moveTo(position.x, position.y);
+        else context.lineTo(position.x, position.y);
+      });
+      context.closePath();
+      context.fillStyle = shadeTerrainColor(terrainDnaColor(triangle.elevation, minimum, maximum), brightness);
+      context.fill();
+      context.strokeStyle = 'rgba(25,36,27,.24)';
+      context.lineWidth = 0.55;
+      context.stroke();
+    });
+  }
+  async function createTerrainFlyoverAt(latlng) {
+    const requestId = ++terrainFlyoverRequestId;
+    if (terrainFlyoverMarker) map.removeLayer(terrainFlyoverMarker);
+    terrainFlyoverMarker = undefined;
+    lastTerrainFlyover = undefined;
+    const context = terrainFlyoverCanvas.getContext('2d');
+    context.clearRect(0, 0, terrainFlyoverCanvas.width, terrainFlyoverCanvas.height);
+    const latitude = latlng.lat;
+    const longitude = latlng.lng;
+    if (!isInsideSouthCarolina(latitude, longitude)) {
+      terrainFlyoverResult.textContent = 'That point is outside South Carolina. Click the land inside the state outline.';
+      terrainFlyoverMeta.textContent = '';
+      return;
+    }
+    terrainFlyoverResult.textContent = 'Sampling a 1.5 km terrain surface from USGS 3DEP…';
+    terrainFlyoverMeta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W`;
+    const footprintMeters = 1500;
+    const cellSpacingMeters = footprintMeters / (terrainFlyoverGridSize - 1);
+    const latitudeSpacing = cellSpacingMeters / 111320;
+    const longitudeSpacing = latitudeSpacing / Math.cos(latitude * Math.PI / 180);
+    const points = [];
+    for (let row = 0; row < terrainFlyoverGridSize; row += 1) {
+      for (let column = 0; column < terrainFlyoverGridSize; column += 1) {
+        const point = {
+          lat: latitude + (row - (terrainFlyoverGridSize - 1) / 2) * latitudeSpacing,
+          lon: longitude + (column - (terrainFlyoverGridSize - 1) / 2) * longitudeSpacing
+        };
+        points.push(isInsideSouthCarolina(point.lat, point.lon) ? point : undefined);
+      }
+    }
+    const validPoints = points
+      .map((point, gridIndex) => point ? { ...point, gridIndex } : undefined)
+      .filter(Boolean);
+    if (validPoints.length < 75) {
+      terrainFlyoverResult.textContent = 'Too little of this model footprint falls inside South Carolina. Try a point farther from the state edge.';
+      terrainFlyoverMeta.textContent = '';
+      return;
+    }
+    const params = new URLSearchParams({
+      geometry: JSON.stringify({
+        points: validPoints.map(point => [point.lon, point.lat]),
+        spatialReference: { wkid: 4326 }
+      }),
+      geometryType: 'esriGeometryMultipoint',
+      sampleCount: String(validPoints.length),
+      interpolation: 'RSP_BilinearInterpolation',
+      outSR: '4326',
+      returnFirstValueOnly: 'true',
+      f: 'json'
+    });
+    try {
+      const response = await fetch(sampleEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+        body: params
+      });
+      if (!response.ok) throw new Error(`Terrain model request failed (${response.status})`);
+      const result = await response.json();
+      if (requestId !== terrainFlyoverRequestId) return;
+      if (result.error) throw new Error(result.error.message || 'The USGS elevation service returned an error.');
+      const elevations = Array(terrainFlyoverGridSize * terrainFlyoverGridSize).fill(undefined);
+      (result.samples || []).forEach(sample => {
+        const elevation = Number(sample.value);
+        const point = validPoints[sample.locationId];
+        if (point && Number.isFinite(elevation)) elevations[point.gridIndex] = elevation;
+      });
+      const available = elevations.filter(Number.isFinite);
+      if (available.length < 75) throw new Error('Not enough USGS elevation samples were available to render this model.');
+      const minimum = Math.min(...available);
+      const maximum = Math.max(...available);
+      const reliefMeters = maximum - minimum;
+      const verticalExaggeration = Math.max(3, Math.min(30, 18 / Math.max(reliefMeters / cellSpacingMeters, 0.6)));
+      lastTerrainFlyover = {
+        elevations,
+        gridSize: terrainFlyoverGridSize,
+        minimum,
+        maximum,
+        cellSpacingMeters,
+        verticalExaggeration
+      };
+      drawTerrainFlyover();
+      terrainFlyoverResult.textContent = `USGS 3DEP terrain · ${available.length} sampled elevations`;
+      terrainFlyoverMeta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W · range ${Math.round(minimum * 3.28084)}–${Math.round(maximum * 3.28084)} ft · approx. 1.5 km footprint · vertical relief exaggerated ${verticalExaggeration.toFixed(1)}×`;
+      terrainFlyoverCanvas.setAttribute('aria-label', `Isometric model of South Carolina terrain near ${latitude.toFixed(4)} degrees north, ${Math.abs(longitude).toFixed(4)} degrees west. Elevation ranges from ${Math.round(minimum * 3.28084)} to ${Math.round(maximum * 3.28084)} feet; vertical relief exaggerated ${verticalExaggeration.toFixed(1)} times.`);
+      terrainFlyoverMarker = L.circleMarker([latitude, longitude], {
+        pane: 'terrainFlyoverPane',
+        radius: 7,
+        color: '#18231c',
+        weight: 2,
+        fillColor: '#f0a36f',
+        fillOpacity: 1
+      }).addTo(map);
+      statusElement.textContent = 'USGS 3DEP terrain model rendered';
+    } catch (error) {
+      if (requestId !== terrainFlyoverRequestId) return;
+      console.error('Unable to render USGS terrain model:', error);
+      terrainFlyoverResult.textContent = error.message || 'Unable to build a terrain model at this point.';
+      terrainFlyoverMeta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W`;
+    }
+  }
+  terrainFlyoverRotation.addEventListener('input', () => {
+    terrainFlyoverRotationValue.value = `${terrainFlyoverRotation.value}°`;
+    terrainFlyoverRotationValue.textContent = `${terrainFlyoverRotation.value}°`;
+    drawTerrainFlyover();
+  });
+  window.addEventListener('resize', () => {
+    if (lastTerrainFlyover) window.requestAnimationFrame(drawTerrainFlyover);
+  });
   async function createTerrainDnaAt(latlng) {
     const requestId = ++terrainDnaRequestId;
     if (terrainDnaMarker) map.removeLayer(terrainDnaMarker);
@@ -1075,6 +1321,7 @@ if (typeof L === 'undefined') {
   watershedToggle.addEventListener('click', () => {
     const enabled = watershedToggle.getAttribute('aria-pressed') !== 'true';
     isFindingWatershed = enabled;
+    terrainFlyoverToggle.disabled = enabled;
     if (!enabled) watershedRequestId += 1;
     isFindingTerrainDna = false;
     terrainDnaToggle.setAttribute('aria-pressed', 'false');
@@ -1120,6 +1367,7 @@ if (typeof L === 'undefined') {
     } else {
       floodToggle.disabled = false;
       terrainDnaToggle.disabled = false;
+      terrainFlyoverToggle.disabled = !stateRing;
       profileHint.textContent = 'Draw a line on the map to see its elevation.';
     }
   });
@@ -1127,6 +1375,7 @@ if (typeof L === 'undefined') {
   riverToggle.addEventListener('click', () => {
     const enabled = riverToggle.getAttribute('aria-pressed') !== 'true';
     isFindingRivers = enabled;
+    terrainFlyoverToggle.disabled = enabled;
     probeRequestId += 1;
     isFindingTerrainDna = false;
     terrainDnaToggle.setAttribute('aria-pressed', 'false');
@@ -1171,6 +1420,7 @@ if (typeof L === 'undefined') {
       watershedToggle.disabled = !stateRing;
       floodToggle.disabled = !stateRing;
       terrainDnaToggle.disabled = !stateRing;
+      terrainFlyoverToggle.disabled = !stateRing;
       profileHint.textContent = 'Draw a line on the map to see its elevation.';
     }
   });
@@ -1178,6 +1428,7 @@ if (typeof L === 'undefined') {
   countyToggle.addEventListener('click', () => {
     const enabled = countyToggle.getAttribute('aria-pressed') !== 'true';
     isFindingCounty = enabled;
+    terrainFlyoverToggle.disabled = enabled;
     isFindingTerrainDna = false;
     terrainDnaToggle.setAttribute('aria-pressed', 'false');
     terrainDnaToggle.textContent = '✧ Terrain DNA';
@@ -1225,6 +1476,7 @@ if (typeof L === 'undefined') {
       riverToggle.disabled = !stateRing;
       floodToggle.disabled = !stateRing;
       terrainDnaToggle.disabled = !stateRing;
+      terrainFlyoverToggle.disabled = !stateRing;
       profileHint.textContent = 'Draw a line on the map to see its elevation.';
     }
     countyPanel.hidden = !enabled && !countyShape;
@@ -1233,6 +1485,7 @@ if (typeof L === 'undefined') {
   floodToggle.addEventListener('click', () => {
     const enabled = floodToggle.getAttribute('aria-pressed') !== 'true';
     isFindingFloodAlerts = enabled;
+    terrainFlyoverToggle.disabled = enabled;
     isFindingTerrainDna = false;
     terrainDnaToggle.setAttribute('aria-pressed', 'false');
     terrainDnaToggle.textContent = '✧ Terrain DNA';
@@ -1282,13 +1535,86 @@ if (typeof L === 'undefined') {
       riverToggle.disabled = !stateRing;
       countyToggle.disabled = !stateRing;
       terrainDnaToggle.disabled = !stateRing;
+      terrainFlyoverToggle.disabled = !stateRing;
       profileHint.textContent = 'Draw a line on the map to see its elevation.';
     }
   });
   floodRefreshButton.addEventListener('click', loadFloodAlerts);
+  terrainFlyoverToggle.addEventListener('click', () => {
+    const enabled = terrainFlyoverToggle.getAttribute('aria-pressed') !== 'true';
+    isFindingTerrainFlyover = enabled;
+    isProbingElevation = false;
+    probeRequestId += 1;
+    probeToggle.setAttribute('aria-pressed', 'false');
+    probeToggle.textContent = '⌖ Probe elevation';
+    probeToggle.disabled = enabled;
+    probePanel.hidden = true;
+    if (probeMarker) map.removeLayer(probeMarker);
+    probeMarker = undefined;
+    isFindingWatershed = false;
+    watershedRequestId += 1;
+    watershedToggle.setAttribute('aria-pressed', 'false');
+    watershedToggle.textContent = '⌁ Watershed finder';
+    watershedToggle.disabled = enabled;
+    clearWatershed();
+    isFindingRivers = false;
+    riverToggle.setAttribute('aria-pressed', 'false');
+    riverToggle.textContent = '〰 River pulse';
+    riverToggle.disabled = enabled;
+    clearRiverPulse();
+    isFindingCounty = false;
+    countyToggle.setAttribute('aria-pressed', 'false');
+    countyToggle.textContent = '▧ County Explorer';
+    countyToggle.disabled = enabled;
+    clearCounty();
+    isFindingFloodAlerts = false;
+    floodRequestId += 1;
+    floodToggle.setAttribute('aria-pressed', 'false');
+    floodToggle.textContent = '⚑ Flood Watch';
+    floodToggle.disabled = enabled;
+    clearFloodAlerts();
+    isFindingTerrainDna = false;
+    terrainDnaRequestId += 1;
+    terrainDnaToggle.setAttribute('aria-pressed', 'false');
+    terrainDnaToggle.textContent = '✧ Terrain DNA';
+    terrainDnaToggle.disabled = enabled;
+    clearTerrainDna();
+    if (isDrawingProfile) {
+      isDrawingProfile = false;
+      map.doubleClickZoom.enable();
+      profileStartButton.textContent = '＋ Draw elevation profile';
+    }
+    profileStartButton.disabled = enabled;
+    profileFinishButton.disabled = true;
+    profileClearButton.disabled = enabled || profilePoints.length === 0;
+    terrainFlyoverToggle.setAttribute('aria-pressed', String(enabled));
+    terrainFlyoverToggle.textContent = enabled ? '× Stop terrain flyover' : '◢ Terrain flyover';
+    terrainFlyoverToggle.disabled = !stateRing;
+    clearTerrainFlyover();
+    if (enabled) {
+      terrainFlyoverPanel.hidden = false;
+      terrainFlyoverResult.textContent = 'Click anywhere inside South Carolina to build a local terrain model.';
+      profileHint.textContent = 'Click a place inside South Carolina to render its terrain flyover.';
+    } else {
+      probeToggle.disabled = !stateRing;
+      watershedToggle.disabled = !stateRing;
+      riverToggle.disabled = !stateRing;
+      countyToggle.disabled = !stateRing;
+      floodToggle.disabled = !stateRing;
+      terrainDnaToggle.disabled = !stateRing;
+      profileHint.textContent = 'Draw a line on the map to see its elevation.';
+    }
+  });
   terrainDnaToggle.addEventListener('click', () => {
     const enabled = terrainDnaToggle.getAttribute('aria-pressed') !== 'true';
     isFindingTerrainDna = enabled;
+    terrainFlyoverToggle.disabled = enabled;
+    if (enabled) {
+      isFindingTerrainFlyover = false;
+      terrainFlyoverToggle.setAttribute('aria-pressed', 'false');
+      terrainFlyoverToggle.textContent = '◢ Terrain flyover';
+      clearTerrainFlyover();
+    }
     isProbingElevation = false;
     probeRequestId += 1;
     probeToggle.setAttribute('aria-pressed', 'false');
@@ -1343,6 +1669,7 @@ if (typeof L === 'undefined') {
       riverToggle.disabled = !stateRing;
       countyToggle.disabled = !stateRing;
       floodToggle.disabled = !stateRing;
+      terrainFlyoverToggle.disabled = !stateRing;
       profileHint.textContent = 'Draw a line on the map to see its elevation.';
     }
     terrainDnaPanel.hidden = !enabled;
@@ -1362,6 +1689,7 @@ if (typeof L === 'undefined') {
   });
   probeToggle.addEventListener('click', () => {
     isProbingElevation = !isProbingElevation;
+    terrainFlyoverToggle.disabled = isProbingElevation;
     watershedRequestId += 1;
     isFindingTerrainDna = false;
     terrainDnaRequestId += 1;
@@ -1558,6 +1886,10 @@ if (typeof L === 'undefined') {
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
   map.on('click', event => {
+    if (isFindingTerrainFlyover) {
+      createTerrainFlyoverAt(event.latlng);
+      return;
+    }
     if (isFindingTerrainDna) {
       createTerrainDnaAt(event.latlng);
       return;
@@ -1590,7 +1922,10 @@ if (typeof L === 'undefined') {
   map.on('dblclick', () => {
     if (isDrawingProfile) finishProfile();
   });
-  profileStartButton.addEventListener('click', startProfile);
+  profileStartButton.addEventListener('click', () => {
+    terrainFlyoverToggle.disabled = true;
+    startProfile();
+  });
   profileFinishButton.addEventListener('click', finishProfile);
   profileClearButton.addEventListener('click', () => {
     profileRequestId += 1;
@@ -1606,6 +1941,7 @@ if (typeof L === 'undefined') {
     profileDownloadButton.disabled = true;
     floodToggle.disabled = !stateRing;
     terrainDnaToggle.disabled = !stateRing;
+    terrainFlyoverToggle.disabled = !stateRing;
     profileHint.textContent = 'Draw a line on the map to see its elevation.';
     profileStartButton.disabled = false;
     profileStartButton.textContent = '＋ Draw elevation profile';

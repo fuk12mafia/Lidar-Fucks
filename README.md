@@ -1,6 +1,6 @@
 # South Carolina LiDAR Atlas
 
-A responsive, statewide terrain atlas for South Carolina. The interactive map is centered and bounded around the Palmetto State, with live USGS 3DEP elevation styles, a tap-to-sample elevation probe, neighborhood Terrain DNA fingerprints, a USGS HUC 12 watershed finder, nearby USGS streamflow and river-stage readings, a Census county explorer, active National Weather Service flood alerts, a swipeable current or historical imagery comparison with a playable archive time-lapse, a four-stop terrain-reading quest, playable sonification and CSV export for elevation profiles, a generalized state outline, and searchable places.
+A responsive, statewide terrain atlas for South Carolina. The interactive map is centered and bounded around the Palmetto State, with live USGS 3DEP elevation styles, a tap-to-sample elevation probe, neighborhood Terrain DNA fingerprints, an opt-in isometric terrain model, a USGS HUC 12 watershed finder, nearby USGS streamflow and river-stage readings, a Census county explorer, active National Weather Service flood alerts, a swipeable current or historical imagery comparison with a playable archive time-lapse, a four-stop terrain-reading quest, playable sonification and CSV export for elevation profiles, a generalized state outline, and searchable places.
 
 ## Run locally
 
@@ -15,6 +15,7 @@ Then visit `http://localhost:8000`.
 ## Data sources and imagery
 
 - Terrain tiles and profile samples are dynamically rendered from the [USGS 3DEP ImageServer](https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer). Available map styles include hillshade, multidirectional hillshade, tinted elevation, slope, aspect, and contours. The service is a multi-resolution, multi-source bare-earth elevation service; not every location is necessarily LiDAR-derived. Consult the [USGS LiDAR Explorer](https://apps.nationalmap.gov/lidar-explorer/) for project coverage, survey source, and acquisition details.
+- Terrain flyover samples a 25 × 25 point grid over an approximately 1.5 km footprint with the USGS 3DEP ImageServer `getSamples` operation, then draws a rotatable isometric surface in the browser. The view exaggerates vertical relief for legibility; source resolution varies by location, and the model is exploratory rather than survey-grade.
 - The simplified South Carolina state outline is from [U.S. Census TIGERweb](https://tigerweb.geo.census.gov/).
 - The watershed finder queries USGS [Watershed Boundary Dataset](https://hydro.nationalmap.gov/arcgis/rest/services/wbd/MapServer) 12-digit subwatershed polygons and reports the mapped name, HUC, area, and downstream HUC. WBD boundaries are for geographic display and analysis, not site-specific regulatory determinations.
 - River Pulse queries the USGS [Water Data APIs](https://api.waterdata.usgs.gov/ogcapi/v1/collections/continuous) for recent streamflow and gage-height observations, then shows the nearest reporting gauges within 30 miles of a clicked in-state point. Results are observations, may be provisional, and are not flood warnings or safety guidance.

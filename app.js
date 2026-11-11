@@ -2087,6 +2087,7 @@ if (typeof L === 'undefined') {
       countyToggle.disabled = false;
       floodToggle.disabled = false;
       terrainDnaToggle.disabled = false;
+      terrainFlyoverToggle.disabled = false;
       const maskPane = map.createPane('stateMaskPane');
       maskPane.style.zIndex = '420';
       const worldRing = [[-85, -180], [-85, 180], [85, 180], [85, -180], [-85, -180]];

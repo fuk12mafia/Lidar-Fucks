@@ -166,18 +166,36 @@
         <div class="terrain-dna-heading">
           <div><p class="eyebrow dark-eyebrow">LOCAL RELIEF FINGERPRINT · USGS 3DEP</p><h3 id="terrain-dna-title">Terrain DNA</h3></div>
           <div class="terrain-dna-actions">
+            <button class="map-tool-button secondary" id="terrain-dna-compare-toggle" type="button" aria-pressed="false">Compare two places</button>
             <button class="map-tool-button secondary" id="terrain-dna-copy" type="button" disabled>Copy fingerprint</button>
             <button class="map-tool-button secondary" id="terrain-dna-clear" type="button">Clear sample</button>
           </div>
         </div>
-        <div class="terrain-dna-readout">
+        <div class="terrain-dna-readout" id="terrain-dna-single">
           <div class="terrain-dna-grid" id="terrain-dna-grid" role="img" aria-label="Grid of sampled elevations across the terrain neighborhood"></div>
           <div class="terrain-dna-copy">
             <p class="terrain-dna-result" id="terrain-dna-result" aria-live="polite">Turn on Terrain DNA, then click a point inside South Carolina.</p>
             <p class="terrain-dna-meta" id="terrain-dna-meta"></p>
           </div>
         </div>
-        <p class="terrain-dna-caveat">A 7 × 7 sample grid summarizes a roughly 1.5 km neighborhood. “Average neighbor change” is a simple local roughness measure; this fingerprint is exploratory, varies with source resolution, and is not survey-grade analysis.</p>
+        <div class="terrain-dna-comparison" id="terrain-dna-comparison" hidden>
+          <div class="terrain-dna-pair">
+            <article class="terrain-dna-sample">
+              <h4>Point A</h4>
+              <div class="terrain-dna-grid" id="terrain-dna-grid-a" role="img" aria-label="Point A terrain fingerprint"></div>
+              <p class="terrain-dna-result" id="terrain-dna-result-a" aria-live="polite">Waiting for the first location.</p>
+              <p class="terrain-dna-meta" id="terrain-dna-meta-a"></p>
+            </article>
+            <article class="terrain-dna-sample">
+              <h4>Point B</h4>
+              <div class="terrain-dna-grid" id="terrain-dna-grid-b" role="img" aria-label="Point B terrain fingerprint"></div>
+              <p class="terrain-dna-result" id="terrain-dna-result-b" aria-live="polite">Waiting for the second location.</p>
+              <p class="terrain-dna-meta" id="terrain-dna-meta-b"></p>
+            </article>
+          </div>
+          <div class="terrain-dna-delta" id="terrain-dna-delta" aria-live="polite"></div>
+        </div>
+        <p class="terrain-dna-caveat">A 7 × 7 sample grid summarizes a roughly 1.5 km neighborhood. Compare mode reports Point B minus Point A for local relief and “average neighbor change,” a simple local roughness measure. Results are exploratory, vary with source resolution, and are not survey-grade analysis.</p>
       </section>
       <div class="profile-panel" id="profile-panel" hidden>
         <div class="profile-chart-wrap"><canvas id="profile-chart" role="img" aria-label="Elevation profile graph"></canvas></div>

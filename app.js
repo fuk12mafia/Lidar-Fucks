@@ -79,6 +79,15 @@ const terrainDnaGrid = document.querySelector('#terrain-dna-grid');
 const terrainDnaMeta = document.querySelector('#terrain-dna-meta');
 const terrainDnaCopy = document.querySelector('#terrain-dna-copy');
 const terrainDnaClear = document.querySelector('#terrain-dna-clear');
+const terrainDnaCompareToggle = document.querySelector('#terrain-dna-compare-toggle');
+const terrainDnaSingle = document.querySelector('#terrain-dna-single');
+const terrainDnaComparison = document.querySelector('#terrain-dna-comparison');
+const terrainDnaDelta = document.querySelector('#terrain-dna-delta');
+const terrainDnaComparisonSlots = [0, 1].map(index => ({
+  grid: document.querySelector(`#terrain-dna-grid-${index === 0 ? 'a' : 'b'}`),
+  result: document.querySelector(`#terrain-dna-result-${index === 0 ? 'a' : 'b'}`),
+  meta: document.querySelector(`#terrain-dna-meta-${index === 0 ? 'a' : 'b'}`)
+}));
 const swipeToggle = document.querySelector('#swipe-toggle');
 const imageryDateLabel = document.querySelector('#imagery-date-label');
 const imageryDate = document.querySelector('#imagery-date');
@@ -322,12 +331,17 @@ if (typeof L === 'undefined') {
   let isFindingCounty = false;
   let isFindingFloodAlerts = false;
   let isFindingTerrainDna = false;
+  let isComparingTerrainDna = false;
   let probeRequestId = 0;
   let watershedRequestId = 0;
   let riverRequestId = 0;
   let countyRequestId = 0;
   let floodRequestId = 0;
   let terrainDnaRequestId = 0;
+  let terrainDnaSessionId = 0;
+  const terrainDnaSlotRequestIds = [0, 0];
+  const terrainDnaSlotPending = [false, false];
+  const terrainDnaComparisonPoints = [undefined, undefined];
   let lastProbeCoordinates;
   let stateRing;
   let probeMarker;
@@ -336,7 +350,9 @@ if (typeof L === 'undefined') {
   let countyMarker;
   let floodAlertLayer;
   let terrainDnaMarker;
+  const terrainDnaComparisonMarkers = [undefined, undefined];
   let lastTerrainDna;
+  const lastTerrainDnaComparison = [undefined, undefined];
   let watershedShape;
   let profilePoints = [];
   let profileRequestId = 0;
@@ -907,13 +923,36 @@ if (typeof L === 'undefined') {
   }
   function clearTerrainDna() {
     terrainDnaRequestId += 1;
+    terrainDnaSessionId += 1;
+    if (!isFindingTerrainDna) {
+      isComparingTerrainDna = false;
+      terrainDnaCompareToggle.setAttribute('aria-pressed', 'false');
+      terrainDnaCompareToggle.textContent = 'Compare two places';
+      terrainDnaSingle.hidden = false;
+      terrainDnaComparison.hidden = true;
+    }
     if (terrainDnaMarker) map.removeLayer(terrainDnaMarker);
     terrainDnaMarker = undefined;
+    terrainDnaComparisonMarkers.forEach((marker, index) => {
+      if (marker) map.removeLayer(marker);
+      terrainDnaComparisonMarkers[index] = undefined;
+      terrainDnaComparisonPoints[index] = undefined;
+      lastTerrainDnaComparison[index] = undefined;
+      terrainDnaSlotPending[index] = false;
+      terrainDnaComparisonSlots[index].grid.replaceChildren();
+      terrainDnaComparisonSlots[index].meta.textContent = '';
+      terrainDnaComparisonSlots[index].result.textContent =
+        index === 0 ? 'Waiting for the first location.' : 'Waiting for the second location.';
+      terrainDnaSlotRequestIds[index] += 1;
+    });
     lastTerrainDna = undefined;
     terrainDnaGrid.replaceChildren();
     terrainDnaMeta.textContent = '';
     terrainDnaCopy.disabled = true;
     terrainDnaResult.textContent = 'Turn on Terrain DNA, then click a point inside South Carolina.';
+    terrainDnaDelta.textContent = isComparingTerrainDna
+      ? 'Click two places inside South Carolina; Point B may replace the second sample.'
+      : '';
     terrainDnaPanel.hidden = !isFindingTerrainDna;
   }
   function terrainDnaColor(value, minimum, maximum) {
@@ -934,21 +973,26 @@ if (typeof L === 'undefined') {
     );
     return `rgb(${rgb.join(',')})`;
   }
-  async function createTerrainDnaAt(latlng) {
-    const requestId = ++terrainDnaRequestId;
-    if (terrainDnaMarker) map.removeLayer(terrainDnaMarker);
-    terrainDnaMarker = undefined;
-    terrainDnaGrid.replaceChildren();
-    terrainDnaCopy.disabled = true;
+  function renderTerrainDnaGrid(grid, points, elevations, minimum, maximum) {
+    points.forEach((point, index) => {
+      const cell = document.createElement('span');
+      cell.className = 'terrain-dna-cell';
+      const elevation = elevations.get(index);
+      if (point && Number.isFinite(elevation)) {
+        cell.style.backgroundColor = terrainDnaColor(elevation, minimum, maximum);
+        cell.setAttribute('aria-label', `${(elevation * 3.28084).toFixed(0)} feet`);
+        cell.title = `${(elevation * 3.28084).toFixed(0)} ft`;
+      } else {
+        cell.classList.add('is-unsampled');
+        cell.setAttribute('aria-label', point ? 'Elevation unavailable' : 'Outside the state');
+      }
+      grid.append(cell);
+    });
+  }
+  async function sampleTerrainDnaAt(latlng) {
     const latitude = latlng.lat;
     const longitude = latlng.lng;
-    if (!isInsideSouthCarolina(latitude, longitude)) {
-      terrainDnaResult.textContent = 'That point is outside South Carolina. Click the land inside the state outline.';
-      terrainDnaMeta.textContent = '';
-      return;
-    }
-    terrainDnaResult.textContent = 'Sampling a 1.5 km terrain neighborhood…';
-    terrainDnaMeta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W`;
+    if (!isInsideSouthCarolina(latitude, longitude)) throw new Error('That point is outside South Carolina. Click the land inside the state outline.');
     const spacingDegrees = 0.00225;
     const longitudeSpacing = spacingDegrees / Math.cos(latitude * Math.PI / 180);
     const points = [];
@@ -965,9 +1009,7 @@ if (typeof L === 'undefined') {
       .map((point, gridIndex) => point ? { ...point, gridIndex } : undefined)
       .filter(Boolean);
     if (validPoints.length < 13) {
-      terrainDnaResult.textContent = 'Not enough sample points fall inside South Carolina here. Try a point farther from the state edge.';
-      terrainDnaMeta.textContent = '';
-      return;
+      throw new Error('Not enough sample points fall inside South Carolina here. Try a point farther from the state edge.');
     }
     const params = new URLSearchParams({
       geometry: JSON.stringify({
@@ -981,70 +1023,91 @@ if (typeof L === 'undefined') {
       returnFirstValueOnly: 'true',
       f: 'json'
     });
-    try {
-      const response = await fetch(`${sampleEndpoint}?${params.toString()}`);
-      if (!response.ok) throw new Error(`Terrain sample request failed (${response.status})`);
-      const result = await response.json();
-      if (requestId !== terrainDnaRequestId) return;
-      if (result.error) throw new Error(result.error.message || 'The USGS elevation service returned an error.');
-      const elevations = new Map();
-      (result.samples || []).forEach(sample => {
-        const elevation = Number(sample.value);
-        const point = validPoints[sample.locationId];
-        if (point && Number.isFinite(elevation)) elevations.set(point.gridIndex, elevation);
-      });
-      if (elevations.size < 13) throw new Error('Not enough USGS elevation samples were available for this neighborhood.');
-      const values = [...elevations.values()];
-      const minimum = Math.min(...values);
-      const maximum = Math.max(...values);
-      const reliefFeet = (maximum - minimum) * 3.28084;
-      const roughnessValues = [];
-      elevations.forEach((elevation, index) => {
-        const row = Math.floor(index / terrainDnaGridSize);
-        const column = index % terrainDnaGridSize;
-        const neighbors = [
-          column > 0 ? index - 1 : -1,
-          column < terrainDnaGridSize - 1 ? index + 1 : -1,
-          row > 0 ? index - terrainDnaGridSize : -1,
-          row < terrainDnaGridSize - 1 ? index + terrainDnaGridSize : -1
-        ];
-        neighbors.forEach(neighbor => {
-          if (elevations.has(neighbor) && neighbor > index) {
-            roughnessValues.push(Math.abs(elevation - elevations.get(neighbor)) * 3.28084);
-          }
-        });
-      });
-      const roughnessFeet = roughnessValues.reduce((sum, value) => sum + value, 0) /
-        Math.max(roughnessValues.length, 1);
-      const signature = reliefFeet < 30
-        ? 'Soft relief'
-        : reliefFeet < 100
-          ? 'Rolling ground'
-          : 'Rugged relief';
-      points.forEach((point, index) => {
-        const cell = document.createElement('span');
-        cell.className = 'terrain-dna-cell';
-        const elevation = elevations.get(index);
-        if (Number.isFinite(elevation)) {
-          cell.style.backgroundColor = terrainDnaColor(elevation, minimum, maximum);
-          cell.setAttribute('aria-label', `${(elevation * 3.28084).toFixed(0)} feet`);
-          cell.title = `${(elevation * 3.28084).toFixed(0)} ft`;
-        } else {
-          cell.classList.add('is-unsampled');
-          cell.setAttribute('aria-label', 'Outside the state or unavailable');
+    const response = await fetch(`${sampleEndpoint}?${params.toString()}`);
+    if (!response.ok) throw new Error(`Terrain sample request failed (${response.status})`);
+    const result = await response.json();
+    if (result.error) throw new Error(result.error.message || 'The USGS elevation service returned an error.');
+    const elevations = new Map();
+    (result.samples || []).forEach(sample => {
+      const elevation = Number(sample.value);
+      const point = validPoints[sample.locationId];
+      if (point && Number.isFinite(elevation)) elevations.set(point.gridIndex, elevation);
+    });
+    if (elevations.size < 13) throw new Error('Not enough USGS elevation samples were available for this neighborhood.');
+    const values = [...elevations.values()];
+    const minimum = Math.min(...values);
+    const maximum = Math.max(...values);
+    const reliefFeet = (maximum - minimum) * 3.28084;
+    const roughnessValues = [];
+    elevations.forEach((elevation, index) => {
+      const row = Math.floor(index / terrainDnaGridSize);
+      const column = index % terrainDnaGridSize;
+      const neighbors = [
+        column > 0 ? index - 1 : -1,
+        column < terrainDnaGridSize - 1 ? index + 1 : -1,
+        row > 0 ? index - terrainDnaGridSize : -1,
+        row < terrainDnaGridSize - 1 ? index + terrainDnaGridSize : -1
+      ];
+      neighbors.forEach(neighbor => {
+        if (elevations.has(neighbor) && neighbor > index) {
+          roughnessValues.push(Math.abs(elevation - elevations.get(neighbor)) * 3.28084);
         }
-        terrainDnaGrid.append(cell);
       });
-      lastTerrainDna = {
-        latitude,
-        longitude,
-        signature,
-        reliefFeet,
-        roughnessFeet,
-        sampleCount: elevations.size
-      };
-      terrainDnaResult.textContent = signature;
-      terrainDnaMeta.textContent = `${elevations.size} USGS samples · local relief ${reliefFeet.toFixed(0)} ft · average neighbor change ${roughnessFeet.toFixed(1)} ft · approx. 1.5 km footprint`;
+    });
+    const roughnessFeet = roughnessValues.reduce((sum, value) => sum + value, 0) /
+      Math.max(roughnessValues.length, 1);
+    const signature = reliefFeet < 30
+      ? 'Soft relief'
+      : reliefFeet < 100
+        ? 'Rolling ground'
+        : 'Rugged relief';
+    return {
+      latitude,
+      longitude,
+      points,
+      elevations,
+      minimum,
+      maximum,
+      signature,
+      reliefFeet,
+      roughnessFeet,
+      sampleCount: elevations.size
+    };
+  }
+  function terrainDnaMetaText(sample) {
+    return `${sample.sampleCount} USGS samples · local relief ${sample.reliefFeet.toFixed(0)} ft · average neighbor change ${sample.roughnessFeet.toFixed(1)} ft · approx. 1.5 km footprint · ${sample.latitude.toFixed(5)}° N, ${Math.abs(sample.longitude).toFixed(5)}° W`;
+  }
+  function updateTerrainDnaDelta() {
+    const [pointA, pointB] = lastTerrainDnaComparison;
+    if (!pointA || !pointB) {
+      terrainDnaDelta.textContent = 'Delta appears when both locations have valid USGS samples.';
+      return;
+    }
+    const reliefDelta = pointB.reliefFeet - pointA.reliefFeet;
+    const roughnessDelta = pointB.roughnessFeet - pointA.roughnessFeet;
+    const signedDelta = (value, digits) => `${value > 0 ? '+' : ''}${value.toFixed(digits)} ft`;
+    terrainDnaDelta.textContent =
+      `Local relief: A ${pointA.reliefFeet.toFixed(0)} ft → B ${pointB.reliefFeet.toFixed(0)} ft ` +
+      `(B − A ${signedDelta(reliefDelta, 0)}). Average neighbor change: A ${pointA.roughnessFeet.toFixed(1)} ft ` +
+      `→ B ${pointB.roughnessFeet.toFixed(1)} ft (B − A ${signedDelta(roughnessDelta, 1)}).`;
+  }
+  async function createTerrainDnaAt(latlng) {
+    const requestId = ++terrainDnaRequestId;
+    if (terrainDnaMarker) map.removeLayer(terrainDnaMarker);
+    terrainDnaMarker = undefined;
+    terrainDnaGrid.replaceChildren();
+    terrainDnaCopy.disabled = true;
+    const latitude = latlng.lat;
+    const longitude = latlng.lng;
+    terrainDnaResult.textContent = 'Sampling a 1.5 km terrain neighborhood…';
+    terrainDnaMeta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W`;
+    try {
+      const sample = await sampleTerrainDnaAt(latlng);
+      if (requestId !== terrainDnaRequestId) return;
+      renderTerrainDnaGrid(terrainDnaGrid, sample.points, sample.elevations, sample.minimum, sample.maximum);
+      lastTerrainDna = sample;
+      terrainDnaResult.textContent = sample.signature;
+      terrainDnaMeta.textContent = terrainDnaMetaText(sample);
       terrainDnaCopy.disabled = false;
       terrainDnaMarker = L.circleMarker([latitude, longitude], {
         pane: 'terrainDnaPane',
@@ -1060,6 +1123,51 @@ if (typeof L === 'undefined') {
       console.error('Unable to build USGS terrain fingerprint:', error);
       terrainDnaResult.textContent = error.message || 'Unable to sample this terrain neighborhood.';
       terrainDnaMeta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W`;
+    }
+  }
+  async function createTerrainDnaComparisonAt(latlng) {
+    const index = terrainDnaComparisonPoints[0] && (lastTerrainDnaComparison[0] || terrainDnaSlotPending[0]) ? 1 : 0;
+    const requestId = ++terrainDnaSlotRequestIds[index];
+    const sessionId = terrainDnaSessionId;
+    const slot = terrainDnaComparisonSlots[index];
+    const latitude = latlng.lat;
+    const longitude = latlng.lng;
+    terrainDnaComparisonPoints[index] = latlng;
+    terrainDnaSlotPending[index] = true;
+    lastTerrainDnaComparison[index] = undefined;
+    if (terrainDnaComparisonMarkers[index]) map.removeLayer(terrainDnaComparisonMarkers[index]);
+    terrainDnaComparisonMarkers[index] = undefined;
+    slot.grid.replaceChildren();
+    slot.meta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W`;
+    slot.result.textContent = index === 0 ? 'Sampling Point A…' : 'Sampling Point B…';
+    terrainDnaCopy.disabled = true;
+    updateTerrainDnaDelta();
+    try {
+      const sample = await sampleTerrainDnaAt(latlng);
+      if (sessionId !== terrainDnaSessionId || requestId !== terrainDnaSlotRequestIds[index]) return;
+      terrainDnaSlotPending[index] = false;
+      renderTerrainDnaGrid(slot.grid, sample.points, sample.elevations, sample.minimum, sample.maximum);
+      slot.result.textContent = sample.signature;
+      slot.meta.textContent = terrainDnaMetaText(sample);
+      lastTerrainDnaComparison[index] = sample;
+      terrainDnaComparisonMarkers[index] = L.circleMarker([latitude, longitude], {
+        pane: 'terrainDnaPane',
+        radius: 7,
+        color: '#18231c',
+        weight: 2,
+        fillColor: index === 0 ? '#bdcd72' : '#f0a36f',
+        fillOpacity: 1
+      }).addTo(map);
+      updateTerrainDnaDelta();
+      terrainDnaCopy.disabled = !lastTerrainDnaComparison[0] || !lastTerrainDnaComparison[1];
+      statusElement.textContent = `USGS terrain fingerprint ${index === 0 ? 'A' : 'B'} sampled`;
+    } catch (error) {
+      if (sessionId !== terrainDnaSessionId || requestId !== terrainDnaSlotRequestIds[index]) return;
+      terrainDnaSlotPending[index] = false;
+      console.error(`Unable to build USGS terrain fingerprint ${index === 0 ? 'A' : 'B'}:`, error);
+      slot.result.textContent = error.message || 'Unable to sample this terrain neighborhood.';
+      terrainDnaCopy.disabled = true;
+      updateTerrainDnaDelta();
     }
   }
   function clearWatershed() {
@@ -1289,6 +1397,11 @@ if (typeof L === 'undefined') {
   terrainDnaToggle.addEventListener('click', () => {
     const enabled = terrainDnaToggle.getAttribute('aria-pressed') !== 'true';
     isFindingTerrainDna = enabled;
+    isComparingTerrainDna = false;
+    terrainDnaCompareToggle.setAttribute('aria-pressed', 'false');
+    terrainDnaCompareToggle.textContent = 'Compare two places';
+    terrainDnaSingle.hidden = false;
+    terrainDnaComparison.hidden = true;
     isProbingElevation = false;
     probeRequestId += 1;
     probeToggle.setAttribute('aria-pressed', 'false');
@@ -1348,7 +1461,44 @@ if (typeof L === 'undefined') {
     terrainDnaPanel.hidden = !enabled;
   });
   terrainDnaClear.addEventListener('click', clearTerrainDna);
+  terrainDnaCompareToggle.addEventListener('click', () => {
+    isComparingTerrainDna = terrainDnaCompareToggle.getAttribute('aria-pressed') !== 'true';
+    terrainDnaCompareToggle.setAttribute('aria-pressed', String(isComparingTerrainDna));
+    terrainDnaCompareToggle.textContent = isComparingTerrainDna ? '× Single location' : 'Compare two places';
+    terrainDnaSingle.hidden = isComparingTerrainDna;
+    terrainDnaComparison.hidden = !isComparingTerrainDna;
+    clearTerrainDna();
+    terrainDnaPanel.hidden = false;
+    profileHint.textContent = isComparingTerrainDna
+      ? 'Click two places inside South Carolina to compare their terrain fingerprints.'
+      : 'Click a place inside South Carolina to sample its Terrain DNA.';
+    terrainDnaResult.textContent = isComparingTerrainDna
+      ? 'Click a point inside South Carolina to set Point A.'
+      : 'Click anywhere inside South Carolina to create a terrain fingerprint.';
+    terrainDnaDelta.textContent = isComparingTerrainDna
+      ? 'Click two places inside South Carolina; Point B may replace the second sample.'
+      : '';
+  });
   terrainDnaCopy.addEventListener('click', async () => {
+    if (isComparingTerrainDna) {
+      const [pointA, pointB] = lastTerrainDnaComparison;
+      if (!pointA || !pointB) return;
+      const text = [
+        `South Carolina Terrain DNA comparison`,
+        `Point A: ${pointA.signature}; local relief ${pointA.reliefFeet.toFixed(0)} ft; average neighbor change ${pointA.roughnessFeet.toFixed(1)} ft; ${pointA.sampleCount} USGS 3DEP samples; ${pointA.latitude.toFixed(5)}, ${pointA.longitude.toFixed(5)}`,
+        `Point B: ${pointB.signature}; local relief ${pointB.reliefFeet.toFixed(0)} ft; average neighbor change ${pointB.roughnessFeet.toFixed(1)} ft; ${pointB.sampleCount} USGS 3DEP samples; ${pointB.latitude.toFixed(5)}, ${pointB.longitude.toFixed(5)}`,
+        `B − A: local relief ${(pointB.reliefFeet - pointA.reliefFeet).toFixed(0)} ft; average neighbor change ${(pointB.roughnessFeet - pointA.roughnessFeet).toFixed(1)} ft.`,
+        'Approximate neighborhood summaries, exploratory and not survey-grade analysis.'
+      ].join('\n');
+      try {
+        await navigator.clipboard.writeText(text);
+        statusElement.textContent = 'Terrain comparison copied to clipboard';
+      } catch (error) {
+        console.error('Unable to copy terrain comparison:', error);
+        terrainDnaDelta.textContent = 'Clipboard access unavailable. Copy the comparison manually.';
+      }
+      return;
+    }
     if (!lastTerrainDna) return;
     const { latitude, longitude, signature, reliefFeet, roughnessFeet, sampleCount } = lastTerrainDna;
     const text = `South Carolina Terrain DNA: ${signature}; local relief ${reliefFeet.toFixed(0)} ft; average neighbor change ${roughnessFeet.toFixed(1)} ft; ${sampleCount} USGS 3DEP samples; ${latitude.toFixed(5)}, ${longitude.toFixed(5)}. Approximate neighborhood summary, not survey-grade analysis.`;
@@ -1364,13 +1514,10 @@ if (typeof L === 'undefined') {
     isProbingElevation = !isProbingElevation;
     watershedRequestId += 1;
     isFindingTerrainDna = false;
-    terrainDnaRequestId += 1;
     terrainDnaToggle.setAttribute('aria-pressed', 'false');
     terrainDnaToggle.textContent = '✧ Terrain DNA';
     terrainDnaToggle.disabled = isProbingElevation;
-    terrainDnaPanel.hidden = true;
-    if (terrainDnaMarker) map.removeLayer(terrainDnaMarker);
-    terrainDnaMarker = undefined;
+    clearTerrainDna();
     isFindingFloodAlerts = false;
     floodRequestId += 1;
     floodToggle.setAttribute('aria-pressed', 'false');
@@ -1559,7 +1706,8 @@ if (typeof L === 'undefined') {
   });
   map.on('click', event => {
     if (isFindingTerrainDna) {
-      createTerrainDnaAt(event.latlng);
+      if (isComparingTerrainDna) createTerrainDnaComparisonAt(event.latlng);
+      else createTerrainDnaAt(event.latlng);
       return;
     }
     if (isFindingCounty) {

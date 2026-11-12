@@ -87,6 +87,7 @@ const terrainFlyoverResult = document.querySelector('#terrain-flyover-result');
 const terrainFlyoverMeta = document.querySelector('#terrain-flyover-meta');
 const terrainFlyoverRotation = document.querySelector('#terrain-flyover-rotation');
 const terrainFlyoverRotationValue = document.querySelector('#terrain-flyover-rotation-value');
+const terrainFlyoverOrbit = document.querySelector('#terrain-flyover-orbit');
 const swipeToggle = document.querySelector('#swipe-toggle');
 const imageryDateLabel = document.querySelector('#imagery-date-label');
 const imageryDate = document.querySelector('#imagery-date');
@@ -351,6 +352,7 @@ if (typeof L === 'undefined') {
   let lastTerrainDna;
   let terrainFlyoverMarker;
   let lastTerrainFlyover;
+  let terrainFlyoverOrbitTimer;
   let watershedShape;
   let profilePoints = [];
   let profileRequestId = 0;
@@ -951,6 +953,7 @@ if (typeof L === 'undefined') {
   }
   function clearTerrainFlyover() {
     terrainFlyoverRequestId += 1;
+    stopTerrainFlyoverOrbit();
     if (terrainFlyoverMarker) map.removeLayer(terrainFlyoverMarker);
     terrainFlyoverMarker = undefined;
     lastTerrainFlyover = undefined;
@@ -961,7 +964,20 @@ if (typeof L === 'undefined') {
     terrainFlyoverCanvas.setAttribute('aria-label', 'Isometric 3D model of sampled South Carolina terrain');
     terrainFlyoverResult.textContent = 'Turn on Terrain flyover, then click a point inside South Carolina.';
     terrainFlyoverMeta.textContent = '';
+    terrainFlyoverOrbit.disabled = true;
     terrainFlyoverPanel.hidden = !isFindingTerrainFlyover;
+  }
+  function deactivateTerrainFlyover() {
+    isFindingTerrainFlyover = false;
+    terrainFlyoverToggle.setAttribute('aria-pressed', 'false');
+    terrainFlyoverToggle.textContent = '◢ Terrain flyover';
+    clearTerrainFlyover();
+  }
+  function stopTerrainFlyoverOrbit() {
+    if (terrainFlyoverOrbitTimer) window.clearInterval(terrainFlyoverOrbitTimer);
+    terrainFlyoverOrbitTimer = undefined;
+    terrainFlyoverOrbit.textContent = '▶ Orbit terrain';
+    terrainFlyoverOrbit.setAttribute('aria-pressed', 'false');
   }
   function shadeTerrainColor(color, brightness) {
     const channels = color.match(/\d+/g).map(Number);
@@ -1074,6 +1090,8 @@ if (typeof L === 'undefined') {
   }
   async function createTerrainFlyoverAt(latlng) {
     const requestId = ++terrainFlyoverRequestId;
+    stopTerrainFlyoverOrbit();
+    terrainFlyoverOrbit.disabled = true;
     if (terrainFlyoverMarker) map.removeLayer(terrainFlyoverMarker);
     terrainFlyoverMarker = undefined;
     lastTerrainFlyover = undefined;
@@ -1156,6 +1174,7 @@ if (typeof L === 'undefined') {
       terrainFlyoverResult.textContent = `USGS 3DEP terrain · ${available.length} sampled elevations`;
       terrainFlyoverMeta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W · range ${Math.round(minimum * 3.28084)}–${Math.round(maximum * 3.28084)} ft · approx. 1.5 km footprint · vertical relief exaggerated ${verticalExaggeration.toFixed(1)}×`;
       terrainFlyoverCanvas.setAttribute('aria-label', `Isometric model of South Carolina terrain near ${latitude.toFixed(4)} degrees north, ${Math.abs(longitude).toFixed(4)} degrees west. Elevation ranges from ${Math.round(minimum * 3.28084)} to ${Math.round(maximum * 3.28084)} feet; vertical relief exaggerated ${verticalExaggeration.toFixed(1)} times.`);
+      terrainFlyoverOrbit.disabled = false;
       terrainFlyoverMarker = L.circleMarker([latitude, longitude], {
         pane: 'terrainFlyoverPane',
         radius: 7,
@@ -1172,7 +1191,24 @@ if (typeof L === 'undefined') {
       terrainFlyoverMeta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W`;
     }
   }
+  terrainFlyoverOrbit.addEventListener('click', () => {
+    if (!lastTerrainFlyover) return;
+    if (terrainFlyoverOrbitTimer) {
+      stopTerrainFlyoverOrbit();
+      return;
+    }
+    terrainFlyoverOrbit.textContent = 'Ⅱ Pause orbit';
+    terrainFlyoverOrbit.setAttribute('aria-pressed', 'true');
+    terrainFlyoverOrbitTimer = window.setInterval(() => {
+      const nextAngle = (Number(terrainFlyoverRotation.value) + 2) % 360;
+      terrainFlyoverRotation.value = String(nextAngle);
+      terrainFlyoverRotationValue.value = `${nextAngle}°`;
+      terrainFlyoverRotationValue.textContent = `${nextAngle}°`;
+      drawTerrainFlyover();
+    }, 60);
+  });
   terrainFlyoverRotation.addEventListener('input', () => {
+    stopTerrainFlyoverOrbit();
     terrainFlyoverRotationValue.value = `${terrainFlyoverRotation.value}°`;
     terrainFlyoverRotationValue.textContent = `${terrainFlyoverRotation.value}°`;
     drawTerrainFlyover();
@@ -1321,6 +1357,7 @@ if (typeof L === 'undefined') {
   watershedToggle.addEventListener('click', () => {
     const enabled = watershedToggle.getAttribute('aria-pressed') !== 'true';
     isFindingWatershed = enabled;
+    if (enabled) deactivateTerrainFlyover();
     terrainFlyoverToggle.disabled = enabled;
     if (!enabled) watershedRequestId += 1;
     isFindingTerrainDna = false;
@@ -1375,6 +1412,7 @@ if (typeof L === 'undefined') {
   riverToggle.addEventListener('click', () => {
     const enabled = riverToggle.getAttribute('aria-pressed') !== 'true';
     isFindingRivers = enabled;
+    if (enabled) deactivateTerrainFlyover();
     terrainFlyoverToggle.disabled = enabled;
     probeRequestId += 1;
     isFindingTerrainDna = false;
@@ -1428,6 +1466,7 @@ if (typeof L === 'undefined') {
   countyToggle.addEventListener('click', () => {
     const enabled = countyToggle.getAttribute('aria-pressed') !== 'true';
     isFindingCounty = enabled;
+    if (enabled) deactivateTerrainFlyover();
     terrainFlyoverToggle.disabled = enabled;
     isFindingTerrainDna = false;
     terrainDnaToggle.setAttribute('aria-pressed', 'false');
@@ -1485,6 +1524,7 @@ if (typeof L === 'undefined') {
   floodToggle.addEventListener('click', () => {
     const enabled = floodToggle.getAttribute('aria-pressed') !== 'true';
     isFindingFloodAlerts = enabled;
+    if (enabled) deactivateTerrainFlyover();
     terrainFlyoverToggle.disabled = enabled;
     isFindingTerrainDna = false;
     terrainDnaToggle.setAttribute('aria-pressed', 'false');
@@ -1608,13 +1648,8 @@ if (typeof L === 'undefined') {
   terrainDnaToggle.addEventListener('click', () => {
     const enabled = terrainDnaToggle.getAttribute('aria-pressed') !== 'true';
     isFindingTerrainDna = enabled;
+    if (enabled) deactivateTerrainFlyover();
     terrainFlyoverToggle.disabled = enabled;
-    if (enabled) {
-      isFindingTerrainFlyover = false;
-      terrainFlyoverToggle.setAttribute('aria-pressed', 'false');
-      terrainFlyoverToggle.textContent = '◢ Terrain flyover';
-      clearTerrainFlyover();
-    }
     isProbingElevation = false;
     probeRequestId += 1;
     probeToggle.setAttribute('aria-pressed', 'false');
@@ -1689,6 +1724,7 @@ if (typeof L === 'undefined') {
   });
   probeToggle.addEventListener('click', () => {
     isProbingElevation = !isProbingElevation;
+    if (isProbingElevation) deactivateTerrainFlyover();
     terrainFlyoverToggle.disabled = isProbingElevation;
     watershedRequestId += 1;
     isFindingTerrainDna = false;
@@ -1923,6 +1959,7 @@ if (typeof L === 'undefined') {
     if (isDrawingProfile) finishProfile();
   });
   profileStartButton.addEventListener('click', () => {
+    deactivateTerrainFlyover();
     terrainFlyoverToggle.disabled = true;
     startProfile();
   });

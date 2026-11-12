@@ -183,7 +183,10 @@
       <section class="terrain-flyover-panel" id="terrain-flyover-panel" aria-labelledby="terrain-flyover-title" hidden>
         <div class="terrain-flyover-heading">
           <div><p class="eyebrow dark-eyebrow">LOCAL 3D MODEL · USGS 3DEP</p><h3 id="terrain-flyover-title">Terrain flyover</h3></div>
-          <label for="terrain-flyover-rotation">Rotate view <input id="terrain-flyover-rotation" type="range" min="0" max="360" value="35"><output id="terrain-flyover-rotation-value" for="terrain-flyover-rotation">35°</output></label>
+          <div class="terrain-flyover-controls">
+            <button class="map-tool-button secondary" id="terrain-flyover-orbit" type="button" aria-pressed="false" disabled>▶ Orbit terrain</button>
+            <label for="terrain-flyover-rotation">Rotate view <input id="terrain-flyover-rotation" type="range" min="0" max="360" value="35"><output id="terrain-flyover-rotation-value" for="terrain-flyover-rotation">35°</output></label>
+          </div>
         </div>
         <canvas class="terrain-flyover-canvas" id="terrain-flyover-canvas" role="img" aria-label="Isometric 3D model of sampled South Carolina terrain"></canvas>
         <p class="terrain-flyover-result" id="terrain-flyover-result" aria-live="polite">Turn on Terrain flyover, then click a point inside South Carolina.</p>

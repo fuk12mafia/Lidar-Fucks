@@ -88,6 +88,7 @@ const terrainFlyoverMeta = document.querySelector('#terrain-flyover-meta');
 const terrainFlyoverRotation = document.querySelector('#terrain-flyover-rotation');
 const terrainFlyoverRotationValue = document.querySelector('#terrain-flyover-rotation-value');
 const terrainFlyoverOrbit = document.querySelector('#terrain-flyover-orbit');
+const terrainFlyoverDownload = document.querySelector('#terrain-flyover-download');
 const swipeToggle = document.querySelector('#swipe-toggle');
 const imageryDateLabel = document.querySelector('#imagery-date-label');
 const imageryDate = document.querySelector('#imagery-date');
@@ -965,6 +966,7 @@ if (typeof L === 'undefined') {
     terrainFlyoverResult.textContent = 'Turn on Terrain flyover, then click a point inside South Carolina.';
     terrainFlyoverMeta.textContent = '';
     terrainFlyoverOrbit.disabled = true;
+    terrainFlyoverDownload.disabled = true;
     terrainFlyoverPanel.hidden = !isFindingTerrainFlyover;
   }
   function deactivateTerrainFlyover() {
@@ -1167,6 +1169,8 @@ if (typeof L === 'undefined') {
         gridSize: terrainFlyoverGridSize,
         minimum,
         maximum,
+        latitude,
+        longitude,
         cellSpacingMeters,
         verticalExaggeration
       };
@@ -1175,6 +1179,7 @@ if (typeof L === 'undefined') {
       terrainFlyoverMeta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W · range ${Math.round(minimum * 3.28084)}–${Math.round(maximum * 3.28084)} ft · approx. 1.5 km footprint · vertical relief exaggerated ${verticalExaggeration.toFixed(1)}×`;
       terrainFlyoverCanvas.setAttribute('aria-label', `Isometric model of South Carolina terrain near ${latitude.toFixed(4)} degrees north, ${Math.abs(longitude).toFixed(4)} degrees west. Elevation ranges from ${Math.round(minimum * 3.28084)} to ${Math.round(maximum * 3.28084)} feet; vertical relief exaggerated ${verticalExaggeration.toFixed(1)} times.`);
       terrainFlyoverOrbit.disabled = false;
+      terrainFlyoverDownload.disabled = false;
       terrainFlyoverMarker = L.circleMarker([latitude, longitude], {
         pane: 'terrainFlyoverPane',
         radius: 7,
@@ -1191,6 +1196,86 @@ if (typeof L === 'undefined') {
       terrainFlyoverMeta.textContent = `${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W`;
     }
   }
+  terrainFlyoverDownload.addEventListener('click', () => {
+    if (!lastTerrainFlyover) return;
+    const { latitude, longitude, minimum, maximum, verticalExaggeration } = lastTerrainFlyover;
+    const sourceCanvas = terrainFlyoverCanvas;
+    const bounds = sourceCanvas.getBoundingClientRect();
+    if (!bounds.width || !bounds.height) {
+      terrainFlyoverResult.textContent = 'Could not create the PNG snapshot because the terrain view is not visible.';
+      return;
+    }
+    const pixelRatio = window.devicePixelRatio || 1;
+    const maxCharacters = Math.max(24, Math.floor((bounds.width - 32) / 6));
+    const footerItems = [
+      { text: `USGS 3DEP · ${latitude.toFixed(5)}° N, ${Math.abs(longitude).toFixed(5)}° W · approx. 1.5 km footprint`, color: '#25392d', font: '500 10px "DM Mono", monospace' },
+      { text: `Elevation ${Math.round(minimum * 3.28084)}–${Math.round(maximum * 3.28084)} ft`, color: '#687064', font: '9px "DM Mono", monospace' },
+      { text: `Vertical relief exaggerated ${verticalExaggeration.toFixed(1)}×`, color: '#687064', font: '9px "DM Mono", monospace' },
+      { text: 'Exploratory model only — not survey-grade or for navigation.', color: '#687064', font: '9px "DM Mono", monospace' },
+      { text: 'Source: USGS 3D Elevation Program (3DEP)', color: '#687064', font: '9px "DM Mono", monospace' }
+    ];
+    const footerLines = [];
+    footerItems.forEach(item => {
+      let line = '';
+      item.text.split(/\s+/).forEach(word => {
+        const candidate = line ? `${line} ${word}` : word;
+        if (line && candidate.length > maxCharacters) {
+          footerLines.push({ ...item, text: line });
+          line = word;
+        } else {
+          line = candidate;
+        }
+      });
+      if (line) footerLines.push({ ...item, text: line });
+    });
+    const footerHeight = 18 + footerLines.length * 13;
+    const snapshot = document.createElement('canvas');
+    snapshot.width = Math.max(1, Math.round(bounds.width * pixelRatio));
+    snapshot.height = Math.max(1, Math.round((bounds.height + footerHeight) * pixelRatio));
+    const context = snapshot.getContext('2d');
+    if (!context) {
+      terrainFlyoverResult.textContent = 'Could not create the PNG snapshot in this browser. The terrain model is still available above.';
+      return;
+    }
+    context.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    context.fillStyle = '#e1e2d9';
+    context.fillRect(0, 0, bounds.width, bounds.height);
+    context.drawImage(sourceCanvas, 0, 0, bounds.width, bounds.height);
+    context.fillStyle = '#f0efe8';
+    context.fillRect(0, bounds.height, bounds.width, footerHeight);
+    footerLines.forEach((line, index) => {
+      context.fillStyle = line.color;
+      context.font = line.font;
+      context.fillText(line.text, 16, bounds.height + 10 + (index + 1) * 13);
+    });
+    const filename = `south-carolina-terrain-${latitude.toFixed(5)}N-${Math.abs(longitude).toFixed(5)}W.png`;
+    try {
+      snapshot.toBlob(blob => {
+        if (!blob) {
+          terrainFlyoverResult.textContent = 'The browser could not encode the PNG snapshot. Try again.';
+          return;
+        }
+        try {
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a');
+          link.href = url;
+          link.download = filename;
+          link.style.display = 'none';
+          document.body.append(link);
+          link.click();
+          link.remove();
+          window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+          terrainFlyoverResult.textContent = 'Attributed terrain PNG snapshot downloaded.';
+        } catch (error) {
+          console.error('Unable to download terrain flyover snapshot:', error);
+          terrainFlyoverResult.textContent = 'The PNG was created, but the browser could not start its download.';
+        }
+      }, 'image/png');
+    } catch (error) {
+      console.error('Unable to create terrain flyover snapshot:', error);
+      terrainFlyoverResult.textContent = 'Could not create the PNG snapshot in this browser. Try again.';
+    }
+  });
   terrainFlyoverOrbit.addEventListener('click', () => {
     if (!lastTerrainFlyover) return;
     if (terrainFlyoverOrbitTimer) {
